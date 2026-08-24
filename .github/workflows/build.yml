@@ -10,6 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sabit imzayi kur
+        run: |
+          mkdir -p ~/.android
+          base64 -d keystore.b64 > ~/.android/debug.keystore
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
