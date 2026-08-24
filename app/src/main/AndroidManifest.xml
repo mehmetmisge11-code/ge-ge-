@@ -1,25 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Konum: coarse + fine ön planda istenir, background AYRI bir ekranda istenir -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
-    <!-- Arka plandan activity başlatma muafiyetinin anahtarı ("Diğer uygulamaların üzerinde göster") -->
+    <!-- Arka plandan uygulama acmanin tek yolu bu izin -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Fallback bildirim + pil optimizasyonu muafiyeti -->
+    <!-- 20 metre takibi icin on plan servisi -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!--
-      Android 11+ paket görünürlüğü.
-      Bu <queries><intent> bloğu, QUERY_ALL_PACKAGES istemeden
-      "başlatılabilir tüm uygulamaları" listelememizi sağlar.
-      QUERY_ALL_PACKAGES kullanma: Play Store gerekçe ister ve genelde reddeder.
-    -->
+    <!-- Android 11+ : yuklu uygulamalari gorebilmek icin -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -31,7 +29,7 @@
         android:name=".GecGecApp"
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_mylocation"
-        android:label="GeçGeç"
+        android:label="GecGec"
         android:supportsRtl="true"
         android:theme="@style/Theme.GecGec">
 
@@ -45,12 +43,15 @@
             </intent-filter>
         </activity>
 
-        <!-- Geofence PendingIntent'i buraya düşer. exported=false: sadece sistem tetikler. -->
+        <service
+            android:name=".geo.ProximityService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <receiver
             android:name=".geo.GeofenceReceiver"
             android:exported="false" />
 
-        <!-- Yeniden başlatmada geofence'ler silinir; yeniden kurmak zorundayız. -->
         <receiver
             android:name=".geo.BootReceiver"
             android:exported="true">

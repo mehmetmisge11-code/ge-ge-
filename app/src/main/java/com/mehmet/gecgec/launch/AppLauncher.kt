@@ -6,40 +6,44 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.RingtoneManager
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.mehmet.gecgec.data.EventLog
 import com.mehmet.gecgec.data.Place
 import com.mehmet.gecgec.geo.GeofenceManager.Companion.TAG
 
 /**
- * İşin can alıcı noktası burası.
+ * Tetiklenince: titret + sesle uyar + uygulamayi ac.
  *
- * Android 10'dan beri arka plandaki bir uygulama kendi başına activity başlatamaz.
- * Muafiyetler (developer.android.com/guide/components/activities/background-starts):
- *   - Uygulamanın görünür bir penceresi var
- *   - SYSTEM_ALERT_WINDOW ("Diğer uygulamaların üzerinde göster") izni verilmiş   <-- bizim yolumuz
- *   - Sistemin gönderdiği bir PendingIntent'ten başlatılıyor (ör. bildirime dokunma)
- *   - START_ACTIVITIES_FROM_BACKGROUND (sadece sistem uygulamaları)
- *
- * Yani: overlay izni varsa gerçekten OTOMATİK açılır.
- * Yoksa en fazla "dokun ve aç" bildirimi gösterebiliriz — bunu fallback olarak yapıyoruz.
+ * Android 10'dan beri arka plandaki uygulama kendi basina activity baslatamaz.
+ * Tek pratik muafiyet: SYSTEM_ALERT_WINDOW ("Diger uygulamalarin uzerinde goster").
+ * O izin yoksa "dokun ve ac" bildirimine duseriz.
  */
 object AppLauncher {
 
     private const val PREFS = "gecgec_cooldown"
     private const val CHANNEL_ID = "gecgec_launch"
 
-    fun canLaunchFromBackground(context: Context): Boolean =
-        Settings.canDrawOverlays(context)
+    /** Test butonu icin: cooldown'u atlayarak calistirir. */
+    fun test(context: Context, place: Place) =
+        fire(context, place.copy(cooldownMinutes = 0), "test")
 
-    fun trigger(context: Context, place: Place) {
+    fun fire(context: Context, place: Place, why: String) {
         if (isCoolingDown(context, place)) {
-            Log.i(TAG, "${place.name}: cooldown içinde, atlandı")
+            EventLog.add(context, "${place.name}: yakinda zaten calisti, atlandi")
             return
         }
+        markTriggered(context, place)
+
+        if (place.vibrate) vibrate(context)
+        if (place.sound) beep(context)
 
         val launchIntent = context.packageManager
             .getLaunchIntentForPackage(place.targetPackage)
@@ -49,43 +53,66 @@ object AppLauncher {
             }
 
         if (launchIntent == null) {
-            Log.e(TAG, "${place.targetPackage} bulunamadı (kaldırılmış olabilir)")
+            EventLog.add(context, "${place.targetLabel} bulunamadi (kaldirilmis olabilir)")
             return
         }
 
-        markTriggered(context, place)
-
-        if (canLaunchFromBackground(context)) {
+        if (Settings.canDrawOverlays(context)) {
             try {
                 context.startActivity(launchIntent)
-                Log.i(TAG, "${place.targetLabel} açıldı (${place.name})")
+                EventLog.add(context, "${place.name} → ${place.targetLabel} acildi ($why)")
+                Log.i(TAG, "${place.targetLabel} acildi")
                 return
             } catch (t: Throwable) {
-                Log.e(TAG, "Doğrudan açma başarısız, bildirime düşülüyor", t)
+                Log.e(TAG, "Dogrudan acma basarisiz", t)
             }
         }
 
+        EventLog.add(context, "${place.name}: bildirim gonderildi ($why) - ustte gosterme izni yok")
         notifyTapToOpen(context, place, launchIntent)
     }
 
-    // ---- Fallback: yüksek öncelikli bildirim ----
+    // ---- Uyari ----
+
+    private fun vibrate(context: Context) = runCatching {
+        val v: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Vibrator::class.java)
+        }
+        val pattern = longArrayOf(0, 400, 200, 400, 200, 700)
+        v?.vibrate(VibrationEffect.createWaveform(pattern, -1))
+    }
+
+    private fun beep(context: Context) = runCatching {
+        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        RingtoneManager.getRingtone(context, uri)?.play()
+    }
+
+    // ---- Bildirim yedegi ----
 
     private fun notifyTapToOpen(context: Context, place: Place, launchIntent: Intent) {
-        ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(
+                    NotificationChannel(
+                        CHANNEL_ID, "Konum tetikleyicileri",
+                        NotificationManager.IMPORTANCE_HIGH
+                    )
+                )
+        }
 
         val pi = PendingIntent.getActivity(
-            context,
-            place.id.hashCode(),
-            launchIntent,
+            context, place.id.hashCode(), launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val notif = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("${place.name} — ${place.targetLabel}")
-            .setContentText("Açmak için dokun")
+            .setContentTitle("${place.name} - ${place.targetLabel}")
+            .setContentText("Acmak icin dokun")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setContentIntent(pi)
             .build()
@@ -93,37 +120,25 @@ object AppLauncher {
         try {
             NotificationManagerCompat.from(context).notify(place.id.hashCode(), notif)
         } catch (_: SecurityException) {
-            Log.e(TAG, "POST_NOTIFICATIONS izni yok")
+            Log.e(TAG, "Bildirim izni yok")
         }
-    }
-
-    private fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val ch = NotificationChannel(
-            CHANNEL_ID,
-            "Konum tetikleyicileri",
-            NotificationManager.IMPORTANCE_HIGH
-        )
-        context.getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
     // ---- Cooldown ----
 
     private fun isCoolingDown(context: Context, place: Place): Boolean {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val last = prefs.getLong(place.id, 0L)
+        if (place.cooldownMinutes <= 0) return false
+        val last = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getLong(place.id, 0L)
         return System.currentTimeMillis() - last < place.cooldownMinutes * 60_000L
     }
 
     private fun markTriggered(context: Context, place: Place) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putLong(place.id, System.currentTimeMillis())
-            .apply()
+            .edit().putLong(place.id, System.currentTimeMillis()).apply()
     }
 }
 
-/** Yüklü, başlatılabilir uygulamaları listeler (manifest'teki <queries> bloğu sayesinde). */
 data class InstalledApp(val packageName: String, val label: String)
 
 fun Context.installedLaunchableApps(): List<InstalledApp> {
