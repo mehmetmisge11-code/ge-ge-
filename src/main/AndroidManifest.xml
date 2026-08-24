@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Konum: coarse + fine ön planda istenir, background AYRI bir ekranda istenir -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- Arka plandan activity başlatma muafiyetinin anahtarı ("Diğer uygulamaların üzerinde göster") -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Fallback bildirim + pil optimizasyonu muafiyeti -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!--
+      Android 11+ paket görünürlüğü.
+      Bu <queries><intent> bloğu, QUERY_ALL_PACKAGES istemeden
+      "başlatılabilir tüm uygulamaları" listelememizi sağlar.
+      QUERY_ALL_PACKAGES kullanma: Play Store gerekçe ister ve genelde reddeder.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".GecGecApp"
+        android:allowBackup="true"
+        android:icon="@android:drawable/ic_menu_mylocation"
+        android:label="GeçGeç"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GecGec">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Geofence PendingIntent'i buraya düşer. exported=false: sadece sistem tetikler. -->
+        <receiver
+            android:name=".geo.GeofenceReceiver"
+            android:exported="false" />
+
+        <!-- Yeniden başlatmada geofence'ler silinir; yeniden kurmak zorundayız. -->
+        <receiver
+            android:name=".geo.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
