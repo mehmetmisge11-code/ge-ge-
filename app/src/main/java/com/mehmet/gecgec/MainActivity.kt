@@ -40,10 +40,11 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.mehmet.gecgec.data.EventLog
 import com.mehmet.gecgec.data.Place
+import com.mehmet.gecgec.data.PlaceKind
 import com.mehmet.gecgec.data.PlaceStore
+import com.mehmet.gecgec.data.PoiStore
 import com.mehmet.gecgec.geo.GeofenceManager
 import com.mehmet.gecgec.launch.AppLauncher
-import com.mehmet.gecgec.launch.InstalledApp
 import com.mehmet.gecgec.launch.installedLaunchableApps
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -198,24 +199,30 @@ private fun HomeScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val store = remember { PlaceStore(context) }
+    val poiStore = remember { PoiStore(context) }
     val geo = remember { GeofenceManager(context) }
     val places by store.placesFlow.collectAsStateWithLifecycle(emptyList())
 
     var editing by remember { mutableStateOf<Place?>(null) }
     var editingIsNew by remember { mutableStateOf(false) }
-    var logTick by remember { mutableIntStateOf(0) }
+    var tick by remember { mutableIntStateOf(0) }
+    var busy by remember { mutableStateOf(false) }
+    var counts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) logTick++ }
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) tick++ }
         owner.lifecycle.addObserver(obs)
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
 
     LaunchedEffect(Unit) { store.ensureSeeded() }
     LaunchedEffect(places) { if (places.isNotEmpty()) geo.sync(places) }
+    LaunchedEffect(places, tick) {
+        counts = poiStore.load().byPlace.mapValues { it.value.size }
+    }
 
-    val log = remember(logTick) { EventLog.read(context) }
+    val log = remember(tick) { EventLog.read(context) }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -227,7 +234,7 @@ private fun HomeScreen() {
                 Spacer(Modifier.height(20.dp))
                 Text("GecGec", fontSize = 32.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "${places.count { it.isReady && it.enabled }} yer izleniyor",
+                    "${places.count { it.isReady && it.enabled }} yer aktif",
                     color = MaterialTheme.colorScheme.outline
                 )
             }
@@ -236,23 +243,41 @@ private fun HomeScreen() {
         items(places, key = { it.id }) { p ->
             PlaceCard(
                 place = p,
+                branchCount = counts[p.id] ?: 0,
                 onSetup = { editing = p; editingIsNew = false },
                 onToggle = {
                     scope.launch { store.update(p.id) { it.copy(enabled = !it.enabled) } }
                 },
-                onTest = { AppLauncher.test(context, p); logTick++ },
+                onTest = { AppLauncher.test(context, p); tick++ },
                 onDelete = { scope.launch { store.delete(p.id) } }
             )
         }
 
         item {
-            OutlinedButton(
-                onClick = {
-                    editing = Place(name = "", emoji = "📍")
-                    editingIsNew = true
-                },
-                modifier = Modifier.fillMaxWidth().height(52.dp)
-            ) { Text("+ Yeni yer ekle", fontSize = 16.sp) }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        editing = Place(name = "", emoji = "📍")
+                        editingIsNew = true
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                ) { Text("+ Yeni yer ekle", fontSize = 16.sp) }
+
+                OutlinedButton(
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            geo.sync(forceRefresh = true)
+                            busy = false
+                            tick++
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (busy) "Aranıyor..." else "Yakındaki şubeleri şimdi tara")
+                }
+            }
         }
 
         item {
@@ -261,12 +286,10 @@ private fun HomeScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Olan biten", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { EventLog.clear(context); logTick++ }) {
-                        Text("Temizle")
-                    }
+                    TextButton(onClick = { EventLog.clear(context); tick++ }) { Text("Temizle") }
                 }
                 Text(
-                    "Bir yere yaklastiginda burada satir cikar. Cikmiyorsa telefon " +
+                    "Bir yere yaklastiginda burada satir cikar. Hic cikmiyorsa telefon " +
                         "uygulamayi durdurmustur.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.outline
@@ -276,11 +299,8 @@ private fun HomeScreen() {
 
         if (log.isEmpty()) {
             item {
-                Text(
-                    "Henuz kayit yok.",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.outline
-                )
+                Text("Henuz kayit yok.", fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.outline)
             }
         }
 
@@ -304,7 +324,7 @@ private fun HomeScreen() {
                     if (editingIsNew) store.add(updated)
                     else store.update(updated.id) { updated }
                     editing = null
-                    logTick++
+                    tick++
                 }
             }
         )
@@ -314,12 +334,14 @@ private fun HomeScreen() {
 @Composable
 private fun PlaceCard(
     place: Place,
+    branchCount: Int,
     onSetup: () -> Unit,
     onToggle: () -> Unit,
     onTest: () -> Unit,
     onDelete: () -> Unit
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    val isBrand = place.kind == PlaceKind.BRAND
 
     Card {
         Column(Modifier.padding(18.dp)) {
@@ -329,9 +351,12 @@ private fun PlaceCard(
                 Column(Modifier.weight(1f)) {
                     Text(place.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (place.isReady)
-                            "${place.targetLabel} · ${place.triggerMeters.roundToInt()} m"
-                        else "Henuz kurulmadi",
+                        when {
+                            !place.isReady -> "Henuz kurulmadi"
+                            isBrand -> "Her sube · $branchCount bulundu · " +
+                                "${place.triggerMeters.roundToInt()} m"
+                            else -> "${place.targetLabel} · ${place.triggerMeters.roundToInt()} m"
+                        },
                         color = MaterialTheme.colorScheme.outline, fontSize = 14.sp
                     )
                 }
@@ -342,27 +367,24 @@ private fun PlaceCard(
 
             Spacer(Modifier.height(12.dp))
 
-            if (place.isReady) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (place.isReady) {
                     OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f)) {
                         Text("Dene")
                     }
                     OutlinedButton(onClick = onSetup, modifier = Modifier.weight(1f)) {
                         Text("Degistir")
                     }
-                    TextButton(onClick = { confirmDelete = true }) {
-                        Text("Sil", color = Color(0xFFC62828))
-                    }
-                }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                } else {
                     Button(
                         onClick = onSetup,
                         modifier = Modifier.weight(1f).height(52.dp)
-                    ) { Text("Buradayken bas", fontSize = 16.sp) }
-                    TextButton(onClick = { confirmDelete = true }) {
-                        Text("Sil", color = Color(0xFFC62828))
+                    ) {
+                        Text(if (isBrand) "Ayarla" else "Buradayken bas", fontSize = 16.sp)
                     }
+                }
+                TextButton(onClick = { confirmDelete = true }) {
+                    Text("Sil", color = Color(0xFFC62828))
                 }
             }
         }
@@ -397,7 +419,9 @@ private fun PlaceDialog(
     val scope = rememberCoroutineScope()
     val apps = remember { context.installedLaunchableApps() }
 
+    var kind by remember { mutableStateOf(place.kind) }
     var name by remember { mutableStateOf(place.name) }
+    var search by remember { mutableStateOf(place.searchText) }
     var pkg by remember { mutableStateOf(place.targetPackage) }
     var label by remember { mutableStateOf(place.targetLabel) }
     var lat by remember { mutableStateOf(place.lat) }
@@ -411,6 +435,10 @@ private fun PlaceDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var gotFix by remember { mutableStateOf(place.lat != 0.0) }
 
+    val isBrand = kind == PlaceKind.BRAND
+    val canSave = !busy && name.isNotBlank() && pkg.isNotEmpty() &&
+        if (isBrand) search.isNotBlank() else gotFix
+
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text(if (isNew) "Yeni yer" else place.name) },
@@ -420,12 +448,44 @@ private fun PlaceDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (isNew) {
+                    Text("Ne tur?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = !isBrand,
+                            onClick = { kind = PlaceKind.FIXED }
+                        )
+                        Text("Bu konum")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = isBrand,
+                            onClick = { kind = PlaceKind.BRAND }
+                        )
+                        Text("Marka - her sube")
+                    }
+
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Isim (or. Sok - Bahcelievler)") },
+                        label = { Text("Isim") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (isBrand) {
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        label = { Text("Haritada aranacak ad (or. Starbucks)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Yakinindaki tum subeler haritadan otomatik bulunur. " +
+                            "Konum girmene gerek yok.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.outline
                     )
                 }
 
@@ -434,47 +494,44 @@ private fun PlaceDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (label.isEmpty()) "Acilacak uygulamayi sec" else label) }
 
-                OutlinedButton(
-                    onClick = {
-                        busy = true; error = null
-                        scope.launch {
-                            val loc = currentLocation(context)
-                            busy = false
-                            if (loc == null) error = "Konum alinamadi, tekrar dene."
-                            else { lat = loc.first; lng = loc.second; gotFix = true }
-                        }
-                    },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        when {
-                            busy -> "Konum aliniyor..."
-                            gotFix -> "Konum kayitli - yenilemek icin bas"
-                            else -> "Buradayim, konumu al"
-                        }
-                    )
+                if (!isBrand) {
+                    OutlinedButton(
+                        onClick = {
+                            busy = true; error = null
+                            scope.launch {
+                                val loc = currentLocation(context)
+                                busy = false
+                                if (loc == null) error = "Konum alinamadi, tekrar dene."
+                                else { lat = loc.first; lng = loc.second; gotFix = true }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            when {
+                                busy -> "Konum aliniyor..."
+                                gotFix -> "Konum kayitli - yenilemek icin bas"
+                                else -> "Buradayim, konumu al"
+                            }
+                        )
+                    }
                 }
 
                 Text("Tetikleme mesafesi: ${trigger.roundToInt()} m", fontSize = 14.sp)
-                Slider(
-                    value = trigger,
-                    onValueChange = { trigger = it },
-                    valueRange = 20f..200f
-                )
+                Slider(value = trigger, onValueChange = { trigger = it }, valueRange = 20f..200f)
                 Text(
-                    "GPS hassasiyeti ~10 m. 20'de birakabilirsin ama bina icinde " +
-                        "geciktigini gorursen 50'ye cikar.",
+                    "GPS hassasiyeti ~10 m. Gec kaldigini gorursen 50'ye cikar.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.outline
                 )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = sound, onCheckedChange = { sound = it })
-                    Text("Ses cikar")
+                    Text("Ses")
                     Spacer(Modifier.width(12.dp))
                     Checkbox(checked = vibrate, onCheckedChange = { vibrate = it })
-                    Text("Titret")
+                    Text("Titresim")
                 }
 
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -482,11 +539,13 @@ private fun PlaceDialog(
         },
         confirmButton = {
             Button(
-                enabled = !busy && gotFix && pkg.isNotEmpty() && name.isNotBlank(),
+                enabled = canSave,
                 onClick = {
                     onSave(
                         place.copy(
                             name = name.trim(),
+                            kind = kind,
+                            searchText = search.trim(),
                             targetPackage = pkg,
                             targetLabel = label,
                             lat = lat,
@@ -518,6 +577,7 @@ private fun PlaceDialog(
                                 pkg = a.packageName
                                 label = a.label
                                 if (name.isBlank()) name = a.label
+                                if (isBrand && search.isBlank()) search = a.label
                                 pickingApp = false
                             }
                         )

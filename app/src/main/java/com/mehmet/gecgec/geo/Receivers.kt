@@ -28,9 +28,12 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.mehmet.gecgec.data.AREA_FENCE_ID
 import com.mehmet.gecgec.data.EventLog
-import com.mehmet.gecgec.data.Place
 import com.mehmet.gecgec.data.PlaceStore
+import com.mehmet.gecgec.data.PoiStore
+import com.mehmet.gecgec.data.Target
+import com.mehmet.gecgec.data.buildTargets
 import com.mehmet.gecgec.launch.AppLauncher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +42,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-// ==================== DIS CEMBER TETIKLEYICISI ====================
+// ==================== CEMBER TETIKLEYICISI ====================
 
 class GeofenceReceiver : BroadcastReceiver() {
 
@@ -56,16 +59,24 @@ class GeofenceReceiver : BroadcastReceiver() {
         val ids = event.triggeringGeofences?.map { it.requestId }.orEmpty()
         if (ids.isEmpty()) return
 
-        when (event.geofenceTransition) {
-            Geofence.GEOFENCE_TRANSITION_ENTER -> {
-                EventLog.add(context, "Yaklastin (${ids.size} yer) - hassas takip basliyor")
-                startProximity(context, ids)
+        // Bolgeden cikildi -> yakindaki subeleri yeniden cek
+        if (ids.contains(AREA_FENCE_ID)) {
+            val pending = goAsync()
+            CoroutineScope(Dispatchers.Default).launch {
+                try {
+                    EventLog.add(context, "Bolge degisti - subeler yenileniyor")
+                    GeofenceManager(context.applicationContext).sync(forceRefresh = true)
+                } finally {
+                    pending.finish()
+                }
             }
-            Geofence.GEOFENCE_TRANSITION_EXIT -> {
-                EventLog.add(context, "Uzaklastin - takip durduruldu")
-                context.stopService(Intent(context, ProximityService::class.java))
-            }
+            return
         }
+
+        if (event.geofenceTransition != Geofence.GEOFENCE_TRANSITION_ENTER) return
+
+        EventLog.add(context, "Yaklastin (${ids.size} nokta) - hassas takip basliyor")
+        startProximity(context, ids)
     }
 
     private fun startProximity(context: Context, ids: List<String>) {
@@ -74,13 +85,12 @@ class GeofenceReceiver : BroadcastReceiver() {
         try {
             ContextCompat.startForegroundService(context, svc)
         } catch (t: Throwable) {
-            // Arka plandan servis baslatilamadiysa en azindan uygulamayi acmayi dene
             EventLog.add(context, "Takip servisi baslatilamadi, dogrudan aciliyor")
             CoroutineScope(Dispatchers.Default).launch {
-                val places = PlaceStore(context).load()
+                val targets = loadTargets(context)
                 ids.forEach { id ->
-                    places.firstOrNull { it.id == id && it.enabled }
-                        ?.let { AppLauncher.fire(context, it, "cember") }
+                    targets.firstOrNull { it.fenceId == id }
+                        ?.let { AppLauncher.fire(context, it.place, "cember", it.fenceId) }
                 }
             }
         }
@@ -101,12 +111,15 @@ class BootReceiver : BroadcastReceiver() {
     }
 }
 
+private suspend fun loadTargets(context: Context): List<Target> =
+    buildTargets(PlaceStore(context).load(), PoiStore(context).load())
+
 // ==================== 20 METRE TAKIBI ====================
 
 /**
  * Dis cembere girilince calisir. GPS'i hassas moda alip her 2-3 saniyede
- * konumu olcer; hedefe [Place.triggerMeters] kadar yaklasinca tetikler.
- * Kimse tetiklenmezse 12 dakika sonra kendini kapatir (pil icin).
+ * konumu olcer; hedefe [com.mehmet.gecgec.data.Place.triggerMeters] kadar
+ * yaklasinca tetikler. Kimse tetiklenmezse 12 dakika sonra kendini kapatir.
  */
 class ProximityService : Service() {
 
@@ -114,7 +127,7 @@ class ProximityService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val handler = Handler(Looper.getMainLooper())
 
-    private var places: List<Place> = emptyList()
+    private var targets: List<Target> = emptyList()
     private val watching = linkedSetOf<String>()
     private var callback: LocationCallback? = null
     private var closest = Double.MAX_VALUE
@@ -137,10 +150,13 @@ class ProximityService : Service() {
         goForeground()
 
         intent?.getStringArrayListExtra(EXTRA_IDS)?.let { watching += it }
-        if (watching.isEmpty()) { stopSelf(); return START_NOT_STICKY }
+        if (watching.isEmpty()) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         scope.launch {
-            places = PlaceStore(this@ProximityService).load()
+            targets = loadTargets(this@ProximityService)
             handler.post { startTracking() }
         }
 
@@ -198,14 +214,14 @@ class ProximityService : Service() {
         val done = mutableListOf<String>()
 
         for (id in watching) {
-            val p = places.firstOrNull { it.id == id && it.enabled && it.isReady } ?: continue
+            val t = targets.firstOrNull { it.fenceId == id } ?: continue
             val out = FloatArray(1)
-            Location.distanceBetween(loc.latitude, loc.longitude, p.lat, p.lng, out)
+            Location.distanceBetween(loc.latitude, loc.longitude, t.lat, t.lng, out)
             val d = out[0].toDouble()
             if (d < closest) closest = d
 
-            if (d <= p.triggerMeters) {
-                AppLauncher.fire(this, p, "${d.roundToInt()} m")
+            if (d <= t.place.triggerMeters) {
+                AppLauncher.fire(this, t.place, "${d.roundToInt()} m · ${t.label}", t.fenceId)
                 done += id
             }
         }

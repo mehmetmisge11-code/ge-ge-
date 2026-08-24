@@ -12,14 +12,22 @@ import androidx.core.content.ContextCompat
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.mehmet.gecgec.data.AREA_FENCE_ID
 import com.mehmet.gecgec.data.EventLog
 import com.mehmet.gecgec.data.Place
+import com.mehmet.gecgec.data.PlaceKind
 import com.mehmet.gecgec.data.PlaceStore
+import com.mehmet.gecgec.data.PoiStore
+import com.mehmet.gecgec.data.buildTargets
 import kotlinx.coroutines.tasks.await
 
 /**
- * Dis cemberi kurar. Bu cember sadece "yaklastin" demek icin -
- * asil 20 metre olcumu ProximityService icinde GPS ile yapiliyor.
+ * Cemberleri kurar.
+ *
+ * Iki tur cember var:
+ *  - Yer cemberleri (150 m): girince ProximityService uyanir, 20 metreyi o olcer.
+ *  - Bolge cemberi (4 km): buradan CIKINCA yakindaki subeler haritadan yeniden cekilir.
  */
 class GeofenceManager(private val context: Context) {
 
@@ -44,44 +52,77 @@ class GeofenceManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun sync(places: List<Place>? = null): Result<Int> = runCatching {
+    private suspend fun currentLocation(): Pair<Double, Double>? = runCatching {
+        val fused = LocationServices.getFusedLocationProviderClient(context)
+        val loc = fused.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null).await()
+            ?: fused.lastLocation.await()
+        loc?.let { it.latitude to it.longitude }
+    }.getOrNull()
+
+    /**
+     * @param forceRefresh true ise subeler her halukarda yeniden cekilir.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun sync(
+        places: List<Place>? = null,
+        forceRefresh: Boolean = false
+    ): Result<Int> = runCatching {
         if (!hasPermissions()) {
             EventLog.add(context, "Konum izni eksik - cember kurulamadi")
             error("Konum izni eksik")
         }
 
         val list = places ?: PlaceStore(context).load()
+        val poiStore = PoiStore(context)
+        var cache = poiStore.load()
+
+        val hasBrand = list.any { it.enabled && it.kind == PlaceKind.BRAND && it.isReady }
+        if (hasBrand) {
+            val here = currentLocation()
+            if (here != null && (forceRefresh || poiStore.isStale(cache, here.first, here.second))) {
+                EventLog.add(context, "Yakindaki subeler haritadan cekiliyor...")
+                cache = poiStore.refresh(here.first, here.second, list)
+            }
+        }
+
+        val targets = buildTargets(list, cache)
         runCatching { client.removeGeofences(pendingIntent()).await() }
 
-        val active = list.filter { it.enabled && it.isReady }
-        if (active.isEmpty()) {
-            EventLog.add(context, "Kurulu yer yok")
+        if (targets.isEmpty()) {
+            EventLog.add(context, "Kurulacak yer yok")
             return@runCatching 0
         }
 
-        val fences = active.map { p ->
+        val fences = targets.map { t ->
             Geofence.Builder()
-                .setRequestId(p.id)
-                .setCircularRegion(p.lat, p.lng, p.fenceMeters)
-                // ENTER: cembere girer girmez uyan. DWELL beklemek gec kaliyordu.
-                .setTransitionTypes(
-                    Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT
-                )
+                .setRequestId(t.fenceId)
+                .setCircularRegion(t.lat, t.lng, t.place.fenceMeters)
+                .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
+                .setNotificationResponsiveness(0)
+                .setExpirationDuration(Geofence.NEVER_EXPIRE)
+                .build()
+        }.toMutableList()
+
+        // Bolge cemberi: buradan cikinca subeleri yenile
+        if (hasBrand && cache.updatedAt != 0L) {
+            fences += Geofence.Builder()
+                .setRequestId(AREA_FENCE_ID)
+                .setCircularRegion(cache.centerLat, cache.centerLng, 4000f)
+                .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_EXIT)
                 .setNotificationResponsiveness(0)
                 .setExpirationDuration(Geofence.NEVER_EXPIRE)
                 .build()
         }
 
         val request = GeofencingRequest.Builder()
-            // Zaten cemberin icindeysen de tetiklensin
             .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
             .addGeofences(fences)
             .build()
 
         client.addGeofences(request, pendingIntent()).await()
-        EventLog.add(context, "${fences.size} yer izlemeye alindi")
+        EventLog.add(context, "${targets.size} nokta izlemeye alindi")
         Log.i(TAG, "${fences.size} geofence kuruldu")
-        fences.size
+        targets.size
     }.onFailure {
         EventLog.add(context, "Cember kurulamadi: ${it.message}")
     }

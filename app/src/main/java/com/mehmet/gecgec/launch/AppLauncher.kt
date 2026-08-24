@@ -33,14 +33,18 @@ object AppLauncher {
 
     /** Test butonu icin: cooldown'u atlayarak calistirir. */
     fun test(context: Context, place: Place) =
-        fire(context, place.copy(cooldownMinutes = 0), "test")
+        fire(context, place.copy(cooldownMinutes = 0), "test", place.id)
 
-    fun fire(context: Context, place: Place, why: String) {
-        if (isCoolingDown(context, place)) {
+    /**
+     * @param key cooldown anahtari. Markalarda her sube ayri sayilsin diye
+     *            yer kimligi degil cember kimligi kullanilir.
+     */
+    fun fire(context: Context, place: Place, why: String, key: String = place.id) {
+        if (isCoolingDown(context, place, key)) {
             EventLog.add(context, "${place.name}: yakinda zaten calisti, atlandi")
             return
         }
-        markTriggered(context, place)
+        markTriggered(context, key)
 
         if (place.vibrate) vibrate(context)
         if (place.sound) beep(context)
@@ -126,16 +130,16 @@ object AppLauncher {
 
     // ---- Cooldown ----
 
-    private fun isCoolingDown(context: Context, place: Place): Boolean {
+    private fun isCoolingDown(context: Context, place: Place, key: String): Boolean {
         if (place.cooldownMinutes <= 0) return false
         val last = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getLong(place.id, 0L)
+            .getLong(key, 0L)
         return System.currentTimeMillis() - last < place.cooldownMinutes * 60_000L
     }
 
-    private fun markTriggered(context: Context, place: Place) {
+    private fun markTriggered(context: Context, key: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putLong(place.id, System.currentTimeMillis()).apply()
+            .edit().putLong(key, System.currentTimeMillis()).apply()
     }
 }
 
