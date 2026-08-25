@@ -24,8 +24,16 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
+// ==================== MODEL ====================
+
 @Serializable
-enum class PlaceKind { FIXED, BRAND }
+enum class PlaceKind {
+    /** Tek bir nokta. */
+    FIXED,
+
+    /** Marka - yakindaki TUM subeler haritadan bulunur. */
+    BRAND
+}
 
 @Serializable
 data class Place(
@@ -33,12 +41,16 @@ data class Place(
     val name: String,
     val emoji: String = "📍",
     val kind: PlaceKind = PlaceKind.FIXED,
+    /** BRAND icin haritada aranacak metin, or. "Starbucks" */
     val searchText: String = "",
     val targetPackage: String = "",
     val targetLabel: String = "",
+    /** FIXED icin kayitli konum */
     val lat: Double = 0.0,
     val lng: Double = 0.0,
+    /** Dis cember: buraya girince telefon hassas GPS takibine gecer. */
     val fenceMeters: Float = 150f,
+    /** Asil tetikleme mesafesi. */
     val triggerMeters: Float = 20f,
     val cooldownMinutes: Int = 60,
     val sound: Boolean = true,
@@ -107,6 +119,8 @@ fun distanceMeters(aLat: Double, aLng: Double, bLat: Double, bLng: Double): Doub
     Location.distanceBetween(aLat, aLng, bLat, bLng, o)
     return o[0].toDouble()
 }
+
+// ==================== KAYIT ====================
 
 private val Context.dataStore by preferencesDataStore("gecgec")
 private val PLACES_KEY = stringPreferencesKey("places_json")
@@ -179,6 +193,7 @@ class PoiStore(private val context: Context) {
 
         for (b in brands) {
             val found = MapSearch.nearby(context, b.searchText, lat, lng)
+            // Bulunamadiysa eski listeyi silme - internetsiz kalinca calismaya devam etsin
             if (found.isNotEmpty()) {
                 map[b.id] = found.sortedBy { distanceMeters(lat, lng, it.lat, it.lng) }
                 EventLog.add(context, "${b.name}: ${found.size} sube")
@@ -193,6 +208,12 @@ class PoiStore(private val context: Context) {
     }
 }
 
+// ==================== HARITA ====================
+
+/**
+ * Sube arama. Once Overpass sunuculari denenir (uc yedek), olmazsa Nominatim.
+ * Her hata "Olan biten"e yazilir - sessizce bosluga dusmesin.
+ */
 object MapSearch {
 
     private val OVERPASS = listOf(
@@ -204,12 +225,16 @@ object MapSearch {
     private const val RADIUS_M = 6000
     private const val UA = "GecGec/1.0 (kisisel kullanim)"
 
+    /**
+     * Turkce buyuk/kucuk harf sorununu cozer.
+     * "Şok" -> "[sSşŞ][oOöÖ][kK]" — hem SOK, hem ŞOK, hem Şok eslesir.
+     */
     private fun looseRegex(text: String): String {
         val sb = StringBuilder()
         for (ch in text.trim()) {
             when {
                 ch == ' ' -> sb.append(" ")
-                !ch.isLetterOrDigit() -> {}
+                !ch.isLetterOrDigit() -> {} // sorguyu bozacak karakterleri at
                 else -> {
                     val l = ch.lowercaseChar()
                     val cls = when (l) {
@@ -252,10 +277,12 @@ object MapSearch {
                 }
             }
 
-            val d = 0.06
+            // Yedek: Nominatim
+            val d = 0.06 // ~6 km
             val vb = "${lng - d},${lat + d},${lng + d},${lat - d}"
             val q = URLEncoder.encode(text.trim(), "UTF-8")
-            val r = get("$NOMINATIM?format=jsonv2&q=$q&limit=50&bounded=1&viewbox=$vb")
+            val nUrl = "$NOMINATIM?format=jsonv2&q=$q&limit=50&bounded=1&viewbox=$vb"
+            val r = get(nUrl)
             if (r.first == 200) {
                 val list = parseNominatim(r.second)
                 if (list.isNotEmpty()) {
@@ -269,12 +296,15 @@ object MapSearch {
             emptyList()
         }
 
+    /** Adres/yer adindan konum bulur (konumu uzaktan girmek icin). */
     suspend fun geocode(text: String): List<Poi> = withContext(Dispatchers.IO) {
         if (text.isBlank()) return@withContext emptyList()
         val q = URLEncoder.encode(text.trim(), "UTF-8")
         val r = get("$NOMINATIM?format=jsonv2&q=$q&limit=6&accept-language=tr")
         if (r.first == 200) parseNominatim(r.second) else emptyList()
     }
+
+    // ---- HTTP ----
 
     private fun get(url: String): Pair<Int, String> = runCatching {
         val c = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -308,6 +338,8 @@ object MapSearch {
         code to body
     }.getOrElse { -1 to (it.message ?: "baglanti hatasi") }
 
+    // ---- Cozumleme ----
+
     private fun parseOverpass(body: String): List<Poi> = runCatching {
         val els = JSONObject(body).optJSONArray("elements") ?: return emptyList()
         val out = mutableListOf<Poi>()
@@ -322,4 +354,48 @@ object MapSearch {
                 la = c.optDouble("lat"); lo = c.optDouble("lon")
             }
             if (la.isNaN() || lo.isNaN()) continue
-            out += Poi(la, lo, e.optJSONObject("tags")?.optString("name
+            out += Poi(la, lo, e.optJSONObject("tags")?.optString("name").orEmpty())
+        }
+        out.distinctBy { "%.5f,%.5f".format(it.lat, it.lng) }
+    }.getOrElse { emptyList() }
+
+    private fun parseNominatim(body: String): List<Poi> = runCatching {
+        val arr = JSONArray(body)
+        val out = mutableListOf<Poi>()
+        for (i in 0 until arr.length()) {
+            val e = arr.optJSONObject(i) ?: continue
+            val la = e.optString("lat").toDoubleOrNull() ?: continue
+            val lo = e.optString("lon").toDoubleOrNull() ?: continue
+            val label = e.optString("name").ifBlank {
+                e.optString("display_name").take(60)
+            }
+            out += Poi(la, lo, label)
+        }
+        out.distinctBy { "%.5f,%.5f".format(it.lat, it.lng) }
+    }.getOrElse { emptyList() }
+}
+
+// ==================== OLAY KAYDI ====================
+
+object EventLog {
+    private const val PREFS = "gecgec_log"
+    private const val KEY = "lines"
+    private const val MAX = 60
+
+    fun add(context: Context, text: String) {
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val stamp = SimpleDateFormat("dd.MM HH:mm:ss", Locale.getDefault()).format(Date())
+        val old = p.getString(KEY, "").orEmpty().split("\n").filter { it.isNotBlank() }
+        val lines = (listOf("$stamp  $text") + old).take(MAX)
+        p.edit().putString(KEY, lines.joinToString("\n")).apply()
+    }
+
+    fun read(context: Context): List<String> =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY, "").orEmpty()
+            .split("\n").filter { it.isNotBlank() }
+
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply()
+    }
+}
