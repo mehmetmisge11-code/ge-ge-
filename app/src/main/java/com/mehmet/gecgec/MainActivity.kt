@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +16,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,6 +28,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
@@ -56,6 +61,20 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+
+/** Hedef uygulamanin kendi ikonunu getirir - Sok'un amblemi, Starbucks'in amblemi. */
+fun Context.appIconBitmap(pkg: String): ImageBitmap? {
+    if (pkg.isBlank()) return null
+    return runCatching {
+    val d = packageManager.getApplicationIcon(pkg)
+    val w = d.intrinsicWidth.coerceIn(1, 512)
+    val h = d.intrinsicHeight.coerceIn(1, 512)
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    d.setBounds(0, 0, w, h)
+    d.draw(Canvas(bmp))
+    bmp.asImageBitmap()
+    }.getOrNull()
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -266,8 +285,6 @@ private fun HomeScreen() {
             }
         }
 
-        item { StatusCard(status) }
-
         items(places, key = { it.id }) { p ->
             PlaceCard(
                 place = p,
@@ -311,6 +328,7 @@ private fun HomeScreen() {
         }
 
         if (showLog) {
+            item { StatusCard(status) }
             if (log.isEmpty()) {
                 item {
                     Text("Henuz kayit yok.", fontSize = 13.sp,
@@ -398,11 +416,17 @@ private fun PlaceCard(
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     val isBrand = place.kind == PlaceKind.BRAND
+    val context = LocalContext.current
+    val icon = remember(place.targetPackage) { context.appIconBitmap(place.targetPackage) }
 
     Card {
         Column(Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(place.emoji, fontSize = 30.sp)
+                if (icon != null) {
+                    Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(44.dp))
+                } else {
+                    Text(place.emoji, fontSize = 30.sp)
+                }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(place.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
