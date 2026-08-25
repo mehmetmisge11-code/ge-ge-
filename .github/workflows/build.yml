@@ -32,7 +32,10 @@ jobs:
         run: gradle assembleDebug --no-daemon
 
       - name: Imzayi dogrula
-        run: keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk | head -25
+        run: |
+          APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | tail -1)
+          echo "kullanilan arac: $APKSIGNER"
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: APK yukari at
         uses: actions/upload-artifact@v4
