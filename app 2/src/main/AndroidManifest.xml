@@ -46,6 +46,15 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".TriggerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity=".trigger" />
+
         <service
             android:name=".geo.ProximityService"
             android:exported="false"

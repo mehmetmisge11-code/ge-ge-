@@ -1,5 +1,6 @@
 package com.mehmet.gecgec.launch
 
+import android.app.KeyguardManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -8,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.RingtoneManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -15,6 +17,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.mehmet.gecgec.TriggerActivity
 import com.mehmet.gecgec.data.EventLog
 import com.mehmet.gecgec.data.Place
 import com.mehmet.gecgec.geo.GeofenceManager.Companion.TAG
@@ -62,10 +65,30 @@ object AppLauncher {
         }
 
         if (Settings.canDrawOverlays(context)) {
+            val km = context.getSystemService(KeyguardManager::class.java)
+            val pm = context.getSystemService(PowerManager::class.java)
+            val locked = km?.isKeyguardLocked == true
+            val screenOff = pm?.isInteractive == false
+
             try {
-                context.startActivity(launchIntent)
-                EventLog.add(context, "${place.name} → ${place.targetLabel} acildi ($why)")
-                Log.i(TAG, "${place.targetLabel} acildi")
+                if (locked || screenOff) {
+                    // Kilitli/ekran kapali: ekrani yakip kilit ustunde kart goster,
+                    // parmak izi veya yuz ile acilinca hedef uygulama one gelir.
+                    val i = Intent(context, TriggerActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        putExtra(TriggerActivity.EXTRA_PKG, place.targetPackage)
+                        putExtra(TriggerActivity.EXTRA_LABEL, place.targetLabel)
+                        putExtra(TriggerActivity.EXTRA_PLACE, place.name)
+                        putExtra(TriggerActivity.EXTRA_EMOJI, place.emoji)
+                    }
+                    context.startActivity(i)
+                    EventLog.add(context, "${place.name}: ekran yakildi, kilit bekleniyor ($why)")
+                } else {
+                    context.startActivity(launchIntent)
+                    EventLog.add(context, "${place.name} → ${place.targetLabel} acildi ($why)")
+                }
+                Log.i(TAG, "${place.targetLabel} tetiklendi")
                 return
             } catch (t: Throwable) {
                 Log.e(TAG, "Dogrudan acma basarisiz", t)
