@@ -5,6 +5,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// Sabit imza dosyasi. Derleme sirasinda keystore.b64'ten uretiliyor.
+val fixedKeystore = file("debug.keystore")
+
 android {
     namespace = "com.mehmet.gecgec"
     compileSdk = 36
@@ -15,6 +18,17 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            if (fixedKeystore.exists()) {
+                storeFile = fixedKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
@@ -44,11 +58,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Geofencing + konum
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 
-    // Kalıcı kayıt
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }
