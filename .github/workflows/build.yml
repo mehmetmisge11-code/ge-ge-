@@ -14,6 +14,8 @@ jobs:
         run: |
           mkdir -p ~/.android
           base64 -d keystore.b64 > ~/.android/debug.keystore
+          base64 -d keystore.b64 > app/debug.keystore
+          ls -l app/debug.keystore
 
       - uses: actions/setup-java@v4
         with:
@@ -28,6 +30,9 @@ jobs:
 
       - name: Derle
         run: gradle assembleDebug --no-daemon
+
+      - name: Imzayi dogrula
+        run: keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk | head -25
 
       - name: APK yukari at
         uses: actions/upload-artifact@v4
