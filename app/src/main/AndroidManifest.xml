@@ -31,7 +31,8 @@
     <application
         android:name=".GecGecApp"
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_menu_mylocation"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="GecGec"
         android:supportsRtl="true"
         android:theme="@style/Theme.GecGec">

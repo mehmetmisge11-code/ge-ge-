@@ -51,8 +51,8 @@ data class Place(
     /** Dis cember: buraya girince telefon hassas GPS takibine gecer. */
     val fenceMeters: Float = 150f,
     /** Asil tetikleme mesafesi. */
-    val triggerMeters: Float = 20f,
-    val cooldownMinutes: Int = 60,
+    val triggerMeters: Float = 40f,
+    val cooldownMinutes: Int = 30,
     val sound: Boolean = true,
     val vibrate: Boolean = true,
     val enabled: Boolean = true
@@ -222,6 +222,7 @@ object MapSearch {
         "https://overpass.private.coffee/api/interpreter"
     )
     private const val NOMINATIM = "https://nominatim.openstreetmap.org/search"
+    private const val PHOTON = "https://photon.komoot.io/api/"
     private const val RADIUS_M = 6000
     private const val UA = "GecGec/1.0 (kisisel kullanim)"
 
@@ -253,10 +254,19 @@ object MapSearch {
         return sb.toString()
     }
 
+    /**
+     * Yakindaki subeleri bulur. Uc Overpass sunucusu + Photon + Nominatim denenir,
+     * hepsinin sonucu birlestirilip ayni noktalar teke indirilir. Bir kaynak coker
+     * veya bir subeyi atlarsa digeri yakaliyor.
+     */
     suspend fun nearby(context: Context, text: String, lat: Double, lng: Double): List<Poi> =
         withContext(Dispatchers.IO) {
             if (text.isBlank()) return@withContext emptyList()
 
+            val all = mutableListOf<Poi>()
+            var sources = 0
+
+            // 1) Overpass - en dogru kaynak, marka etiketiyle arar
             val rx = looseRegex(text)
             val query = """
                 [out:json][timeout:25];
@@ -271,32 +281,58 @@ object MapSearch {
                 val r = post(url, "data=" + URLEncoder.encode(query, "UTF-8"))
                 if (r.first == 200) {
                     val list = parseOverpass(r.second)
-                    if (list.isNotEmpty()) return@withContext list
+                    if (list.isNotEmpty()) {
+                        all += list
+                        sources++
+                        break   // bir Overpass yeterli, digerleri yedek
+                    }
                 } else {
-                    EventLog.add(context, "Harita sunucusu yanit vermedi (${r.first})")
+                    EventLog.add(context, "Harita 1 yanit vermedi (${r.first})")
                 }
             }
 
-            // Yedek: Nominatim
-            val d = 0.06 // ~6 km
-            val vb = "${lng - d},${lat + d},${lng + d},${lat - d}"
+            // 2) Photon - bagimsiz ikinci kaynak
             val q = URLEncoder.encode(text.trim(), "UTF-8")
-            val nUrl = "$NOMINATIM?format=jsonv2&q=$q&limit=50&bounded=1&viewbox=$vb"
-            val r = get(nUrl)
-            if (r.first == 200) {
-                val list = parseNominatim(r.second)
-                if (list.isNotEmpty()) {
-                    EventLog.add(context, "Yedek harita kullanildi")
-                    return@withContext list
-                }
-            } else {
-                EventLog.add(context, "Yedek harita da yanit vermedi (${r.first})")
+            val ph = get("$PHOTON?q=$q&lat=$lat&lon=$lng&limit=50")
+            if (ph.first == 200) {
+                val list = parsePhoton(ph.second)
+                    .filter { distanceMeters(lat, lng, it.lat, it.lng) <= RADIUS_M }
+                if (list.isNotEmpty()) { all += list; sources++ }
             }
 
-            emptyList()
+            // 3) Nominatim - ucuncu kaynak
+            val d = 0.06
+            val vb = "${lng - d},${lat + d},${lng + d},${lat - d}"
+            val nm = get("$NOMINATIM?format=jsonv2&q=$q&limit=50&bounded=1&viewbox=$vb")
+            if (nm.first == 200) {
+                val list = parseNominatim(nm.second)
+                    .filter { distanceMeters(lat, lng, it.lat, it.lng) <= RADIUS_M }
+                if (list.isNotEmpty()) { all += list; sources++ }
+            }
+
+            if (sources == 0) {
+                EventLog.add(context, "Hicbir harita kaynagina ulasilamadi")
+                return@withContext emptyList()
+            }
+
+            val merged = mergeNearby(all)
+            EventLog.add(context, "$text: $sources kaynak, ${merged.size} sube")
+            merged
         }
 
-    /** Adres/yer adindan konum bulur (konumu uzaktan girmek icin). */
+    /** Ayni magazayi iki kaynaktan da bulduysak teke indir (35 metreden yakinlar ayni sayilir). */
+    private fun mergeNearby(list: List<Poi>): List<Poi> {
+        val out = mutableListOf<Poi>()
+        for (p in list) {
+            val hit = out.firstOrNull { distanceMeters(it.lat, it.lng, p.lat, p.lng) < 35.0 }
+            if (hit == null) out += p
+            else if (hit.label.isBlank() && p.label.isNotBlank()) {
+                out[out.indexOf(hit)] = hit.copy(label = p.label)
+            }
+        }
+        return out
+    }
+
     suspend fun geocode(text: String): List<Poi> = withContext(Dispatchers.IO) {
         if (text.isBlank()) return@withContext emptyList()
         val q = URLEncoder.encode(text.trim(), "UTF-8")
@@ -357,6 +393,20 @@ object MapSearch {
             out += Poi(la, lo, e.optJSONObject("tags")?.optString("name").orEmpty())
         }
         out.distinctBy { "%.5f,%.5f".format(it.lat, it.lng) }
+    }.getOrElse { emptyList() }
+
+    private fun parsePhoton(body: String): List<Poi> = runCatching {
+        val feats = JSONObject(body).optJSONArray("features") ?: return emptyList()
+        val out = mutableListOf<Poi>()
+        for (i in 0 until feats.length()) {
+            val f = feats.optJSONObject(i) ?: continue
+            val c = f.optJSONObject("geometry")?.optJSONArray("coordinates") ?: continue
+            val lo = c.optDouble(0)
+            val la = c.optDouble(1)
+            if (la.isNaN() || lo.isNaN()) continue
+            out += Poi(la, lo, f.optJSONObject("properties")?.optString("name").orEmpty())
+        }
+        out
     }.getOrElse { emptyList() }
 
     private fun parseNominatim(body: String): List<Poi> = runCatching {

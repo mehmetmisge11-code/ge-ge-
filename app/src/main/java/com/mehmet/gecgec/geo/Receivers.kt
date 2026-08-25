@@ -28,6 +28,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.mehmet.gecgec.R
 import com.mehmet.gecgec.data.AREA_FENCE_ID
 import com.mehmet.gecgec.data.EventLog
 import com.mehmet.gecgec.data.PlaceStore
@@ -133,8 +134,22 @@ class ProximityService : Service() {
     private var closest = Double.MAX_VALUE
 
     private val autoStop = Runnable {
-        val m = if (closest == Double.MAX_VALUE) "-" else "${closest.roundToInt()} m"
-        EventLog.add(this, "Takip bitti, tetiklenmedi (en yakin: $m)")
+        if (closest == Double.MAX_VALUE) {
+            EventLog.add(this, "Takip bitti - konum hic alinamadi")
+        } else {
+            val m = closest.roundToInt()
+            val need = targets.filter { watching.contains(it.fenceId) }
+                .minOfOrNull { it.place.triggerMeters } ?: 0f
+            if (need > 0f && closest > need) {
+                EventLog.add(
+                    this,
+                    "Tetiklenmedi: en yakin $m m geldin, ayar ${need.roundToInt()} m. " +
+                        "Ayarlar'dan mesafeyi ${(closest * 1.4).roundToInt()} m yaparsan calisir."
+                )
+            } else {
+                EventLog.add(this, "Takip bitti (en yakin: $m m)")
+            }
+        }
         stopSelf()
     }
 
@@ -172,7 +187,7 @@ class ProximityService : Service() {
             )
         }
         val n: Notification = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(R.drawable.ic_notify)
             .setContentTitle("GecGec")
             .setContentText("Yaklastin, konum izleniyor...")
             .setPriority(NotificationCompat.PRIORITY_LOW)

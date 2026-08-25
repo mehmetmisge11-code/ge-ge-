@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -217,6 +218,9 @@ private fun SetupScreen(step: SetupStep, doneCount: Int, total: Int) {
 
 // ==================== ANA EKRAN ====================
 
+/** Her yer icin karta yazilan ozet: kac sube var, en yakini kac metre. */
+private data class PlaceInfo(val count: Int, val nearest: Double?)
+
 private data class Status(
     val fenceCount: Int = 0,
     val nearestName: String = "",
@@ -226,6 +230,7 @@ private data class Status(
     val checking: Boolean = true
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeScreen() {
     val context = LocalContext.current
@@ -240,6 +245,8 @@ private fun HomeScreen() {
     var tick by remember { mutableIntStateOf(0) }
     var showLog by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(Status()) }
+    var info by remember { mutableStateOf<Map<String, PlaceInfo>>(emptyMap()) }
+    var refreshing by remember { mutableStateOf(false) }
 
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
@@ -271,10 +278,31 @@ private fun HomeScreen() {
             lastScan = cache.updatedAt,
             checking = false
         )
+
+        info = targets.groupBy { it.place.id }.mapValues { (_, list) ->
+            PlaceInfo(
+                count = list.size,
+                nearest = here?.let { (la, ln) ->
+                    list.minOf { distanceMeters(la, ln, it.lat, it.lng) }
+                }
+            )
+        }
     }
 
     val log = remember(tick, showLog) { EventLog.read(context) }
 
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = {
+            refreshing = true
+            scope.launch {
+                geo.sync(places, forceRefresh = true)
+                tick++
+                refreshing = false
+            }
+        },
+        modifier = Modifier.fillMaxSize()
+    ) {
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
@@ -290,6 +318,7 @@ private fun HomeScreen() {
         items(places, key = { it.id }) { p ->
             PlaceCard(
                 place = p,
+                info = info[p.id],
                 onSetup = { editing = p; editingIsNew = false },
                 onToggle = {
                     scope.launch { store.update(p.id) { it.copy(enabled = !it.enabled) } }
@@ -346,6 +375,7 @@ private fun HomeScreen() {
                 )
             }
         }
+    }
     }
 
     editing?.let { place ->
@@ -408,9 +438,32 @@ private fun StatusCard(s: Status) {
     }
 }
 
+/** "8 sube · en yakin 340 m" gibi. Tetikleme mesafesi burada gosterilmez. */
+private fun subtitleFor(place: Place, info: PlaceInfo?): String {
+    if (!place.isReady) return "Uygulama secilmedi"
+
+    val d = info?.nearest
+    val dist = when {
+        d == null -> null
+        d > 1200 -> "en yakin %.1f km".format(d / 1000)
+        else -> "en yakin ${d.roundToInt()} m"
+    }
+
+    return if (place.kind == PlaceKind.BRAND) {
+        val n = info?.count ?: 0
+        listOfNotNull(
+            if (n > 0) "$n sube" else "sube araniyor",
+            dist
+        ).joinToString(" · ")
+    } else {
+        listOfNotNull(place.targetLabel, dist).joinToString(" · ")
+    }
+}
+
 @Composable
 private fun PlaceCard(
     place: Place,
+    info: PlaceInfo?,
     onSetup: () -> Unit,
     onToggle: () -> Unit,
     onTest: () -> Unit,
@@ -433,11 +486,7 @@ private fun PlaceCard(
                 Column(Modifier.weight(1f)) {
                     Text(place.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        when {
-                            !place.isReady -> "Uygulama secilmedi"
-                            isBrand -> "Her sube · ${place.triggerMeters.roundToInt()} m"
-                            else -> "${place.targetLabel} · ${place.triggerMeters.roundToInt()} m"
-                        },
+                        subtitleFor(place, info),
                         color = MaterialTheme.colorScheme.outline, fontSize = 14.sp
                     )
                 }
@@ -508,6 +557,7 @@ private fun PlaceDialog(
     var trigger by remember { mutableFloatStateOf(place.triggerMeters) }
     var sound by remember { mutableStateOf(place.sound) }
     var vibrate by remember { mutableStateOf(place.vibrate) }
+    var cooldown by remember { mutableFloatStateOf(place.cooldownMinutes.toFloat()) }
 
     var pickingApp by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -624,7 +674,23 @@ private fun PlaceDialog(
                 }
 
                 Text("Tetikleme mesafesi: ${trigger.roundToInt()} m", fontSize = 14.sp)
-                Slider(value = trigger, onValueChange = { trigger = it }, valueRange = 20f..200f)
+                Slider(value = trigger, onValueChange = { trigger = it }, valueRange = 20f..300f)
+                Text(
+                    "Bu kadar yaklasinca calisir. Gec kaliyorsa buyut.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.outline
+                )
+
+                Text(
+                    if (cooldown < 1f) "Bekleme suresi: yok (her seferinde calisir)"
+                    else "Bekleme suresi: ${cooldown.roundToInt()} dakika",
+                    fontSize = 14.sp
+                )
+                Slider(value = cooldown, onValueChange = { cooldown = it }, valueRange = 0f..180f)
+                Text(
+                    "Calistiktan sonra bu sure boyunca ayni yerde tekrar calismaz. " +
+                        "Sok icin 5 dk, spor salonu icin 120 dk mantikli.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.outline
+                )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = sound, onCheckedChange = { sound = it })
@@ -646,6 +712,7 @@ private fun PlaceDialog(
                             name = name.trim(), kind = kind, searchText = search.trim(),
                             targetPackage = pkg, targetLabel = label,
                             lat = lat, lng = lng, triggerMeters = trigger,
+                            cooldownMinutes = cooldown.roundToInt(),
                             sound = sound, vibrate = vibrate
                         )
                     )
