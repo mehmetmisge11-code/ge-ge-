@@ -1,9 +1,14 @@
+// Sabit imza: keystore.b64'ten derleme sirasinda uretiliyor.
+// BU BLOK SILINIRSE her derleme rastgele imza uretir ve
+// guncelleme "paket cakismasi" hatasi verir.
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+val fixedKeystore = file("debug.keystore")
 
 android {
     namespace = "com.mehmet.gecgec"
@@ -15,6 +20,17 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            if (fixedKeystore.exists()) {
+                storeFile = fixedKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
@@ -44,11 +60,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Geofencing + konum
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 
-    // Kalıcı kayıt
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }
