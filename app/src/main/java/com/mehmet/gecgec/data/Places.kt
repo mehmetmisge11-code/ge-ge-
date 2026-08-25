@@ -196,9 +196,9 @@ class PoiStore(private val context: Context) {
             // Bulunamadiysa eski listeyi silme - internetsiz kalinca calismaya devam etsin
             if (found.isNotEmpty()) {
                 map[b.id] = found.sortedBy { distanceMeters(lat, lng, it.lat, it.lng) }
-                EventLog.add(context, "${b.name}: ${found.size} sube")
+                EventLog.add(context, "${b.name}: ${found.size} şube")
             } else {
-                EventLog.add(context, "${b.name}: sube bulunamadi (eski liste korundu)")
+                EventLog.add(context, "${b.name}: şube bulunamadı (eski liste korundu)")
             }
         }
 
@@ -287,7 +287,7 @@ object MapSearch {
                         break   // bir Overpass yeterli, digerleri yedek
                     }
                 } else {
-                    EventLog.add(context, "Harita 1 yanit vermedi (${r.first})")
+                    EventLog.add(context, "Harita 1 yanıt vermedi (${r.first})")
                 }
             }
 
@@ -311,12 +311,12 @@ object MapSearch {
             }
 
             if (sources == 0) {
-                EventLog.add(context, "Hicbir harita kaynagina ulasilamadi")
+                EventLog.add(context, "Hiçbir harita kaynağına ulaşılamadı")
                 return@withContext emptyList()
             }
 
             val merged = mergeNearby(all)
-            EventLog.add(context, "$text: $sources kaynak, ${merged.size} sube")
+            EventLog.add(context, "$text: $sources kaynak, ${merged.size} şube")
             merged
         }
 

@@ -52,7 +52,7 @@ class GeofenceReceiver : BroadcastReceiver() {
 
         if (event.hasError()) {
             val msg = GeofenceStatusCodes.getStatusCodeString(event.errorCode)
-            EventLog.add(context, "Cember hatasi: $msg")
+            EventLog.add(context, "Çember hatası: $msg")
             Log.e(GeofenceManager.TAG, "Geofence hatasi: $msg")
             return
         }
@@ -65,7 +65,7 @@ class GeofenceReceiver : BroadcastReceiver() {
             val pending = goAsync()
             CoroutineScope(Dispatchers.Default).launch {
                 try {
-                    EventLog.add(context, "Bolge degisti - subeler yenileniyor")
+                    EventLog.add(context, "Bölge değişti — şubeler yenileniyor")
                     GeofenceManager(context.applicationContext).sync(forceRefresh = true)
                 } finally {
                     pending.finish()
@@ -76,7 +76,7 @@ class GeofenceReceiver : BroadcastReceiver() {
 
         if (event.geofenceTransition != Geofence.GEOFENCE_TRANSITION_ENTER) return
 
-        EventLog.add(context, "Yaklastin (${ids.size} nokta) - hassas takip basliyor")
+        EventLog.add(context, "Yaklaştın (${ids.size} nokta) — hassas takip başlıyor")
         startProximity(context, ids)
     }
 
@@ -86,7 +86,7 @@ class GeofenceReceiver : BroadcastReceiver() {
         try {
             ContextCompat.startForegroundService(context, svc)
         } catch (t: Throwable) {
-            EventLog.add(context, "Takip servisi baslatilamadi, dogrudan aciliyor")
+            EventLog.add(context, "Takip servisi başlatılamadı, doğrudan açılıyor")
             CoroutineScope(Dispatchers.Default).launch {
                 val targets = loadTargets(context)
                 ids.forEach { id ->
@@ -103,7 +103,7 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             try {
-                EventLog.add(context, "Telefon yeniden basladi - cemberler kuruluyor")
+                EventLog.add(context, "Telefon yeniden başladı — çemberler kuruluyor")
                 GeofenceManager(context.applicationContext).sync()
             } finally {
                 pending.finish()
@@ -135,7 +135,7 @@ class ProximityService : Service() {
 
     private val autoStop = Runnable {
         if (closest == Double.MAX_VALUE) {
-            EventLog.add(this, "Takip bitti - konum hic alinamadi")
+            EventLog.add(this, "Takip bitti — konum hiç alınamadı")
         } else {
             val m = closest.roundToInt()
             val need = targets.filter { watching.contains(it.fenceId) }
@@ -143,11 +143,11 @@ class ProximityService : Service() {
             if (need > 0f && closest > need) {
                 EventLog.add(
                     this,
-                    "Tetiklenmedi: en yakin $m m geldin, ayar ${need.roundToInt()} m. " +
-                        "Ayarlar'dan mesafeyi ${(closest * 1.4).roundToInt()} m yaparsan calisir."
+                    "Tetiklenmedi: en yakın $m m geldin, ayar ${need.roundToInt()} m. " +
+                        "Ayarlar'dan mesafeyi ${(closest * 1.4).roundToInt()} m yaparsan çalışır."
                 )
             } else {
-                EventLog.add(this, "Takip bitti (en yakin: $m m)")
+                EventLog.add(this, "Takip bitti (en yakın: $m m)")
             }
         }
         stopSelf()
@@ -183,13 +183,13 @@ class ProximityService : Service() {
     private fun goForeground() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "Yaklasma takibi", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL, "Yaklaşma takibi", NotificationManager.IMPORTANCE_LOW)
             )
         }
         val n: Notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notify)
-            .setContentTitle("GecGec")
-            .setContentText("Yaklastin, konum izleniyor...")
+            .setContentTitle("GeçGeç")
+            .setContentText("Yaklaştın, konum izleniyor…")
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()
@@ -207,7 +207,7 @@ class ProximityService : Service() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            EventLog.add(this, "Konum izni yok - takip yapilamadi")
+            EventLog.add(this, "Konum izni yok — takip yapılamadı")
             stopSelf()
             return
         }

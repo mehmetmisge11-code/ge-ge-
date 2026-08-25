@@ -81,9 +81,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme()) {
-                Surface(Modifier.fillMaxSize()) {
-                    SplashGate { Root() }
+            MaterialTheme(colorScheme = GecGecDark) {
+                Surface(
+                    Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    SplashGate {
+                        Box(Modifier.fillMaxSize().safeDrawingPadding()) { Root() }
+                    }
                 }
             }
         }
@@ -144,7 +149,7 @@ private fun rememberSetupSteps(): List<SetupStep> {
             .isIgnoringBatteryOptimizations(context.packageName)
 
         listOf(
-            SetupStep("Konum izni", "Nerede oldugunu bilmem lazim.", "Izin ver", fine) {
+            SetupStep("Konum izni", "Nerede olduğunu bilmem lazım.", "İzin ver", fine) {
                 askFine.launch(
                     arrayOf(
                         Manifest.permission.ACCESS_FINE_LOCATION,
@@ -154,19 +159,19 @@ private fun rememberSetupSteps(): List<SetupStep> {
             },
             SetupStep(
                 "\"Her zaman izin ver\"",
-                "Acilan ekranda konum icin \"Her zaman izin ver\"i sec. " +
-                    "Bu olmadan telefon cebindeyken calismaz.",
-                "Ac", bg
+                "Açılan ekranda konum için \"Her zaman izin ver\"i seç. " +
+                    "Bu olmadan telefon cebindeyken çalışmaz.",
+                "Aç", bg
             ) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     askBg.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
                 }
             },
             SetupStep(
-                "Ustte gosterme izni",
-                "Acilan listede GecGec'i bul ve ac. " +
-                    "Android uygulamayi ancak bu izinle kendiliginden actiriyor.",
-                "Ac", overlay
+                "Üstte gösterme izni",
+                "Açılan listede GeçGeç'i bul ve aç. " +
+                    "Android uygulamayı ancak bu izinle kendiliğinden açtırıyor.",
+                "Aç", overlay
             ) {
                 openSettings.launch(
                     Intent(
@@ -176,13 +181,13 @@ private fun rememberSetupSteps(): List<SetupStep> {
                 )
             },
             SetupStep(
-                "Pili kisitlama",
-                "Listenin ustundeki menuden \"Tumu\"nu sec, GecGec'i bul, anahtari KAPAT.",
-                "Ac", battery
+                "Pili kısıtlama",
+                "Listenin üstündeki menüden \"Tümü\"nü seç, GeçGeç'i bul, anahtarı KAPAT.",
+                "Aç", battery
             ) {
                 openSettings.launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             },
-            SetupStep("Bildirim izni", "Uyari gonderebilmem icin.", "Izin ver", notif) {
+            SetupStep("Bildirim izni", "Uyarı gönderebilmem için.", "İzin ver", notif) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
@@ -311,7 +316,7 @@ private fun HomeScreen() {
         item {
             Column {
                 Spacer(Modifier.height(20.dp))
-                Text("GecGec", fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                Text("GeçGeç", fontSize = 32.sp, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -347,7 +352,7 @@ private fun HomeScreen() {
                 Text(if (showLog) "▾" else "▸", fontSize = 16.sp)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Kayitlar",
+                    "Kayıtlar",
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.outline
                 )
@@ -362,7 +367,7 @@ private fun HomeScreen() {
             item { StatusCard(status) }
             if (log.isEmpty()) {
                 item {
-                    Text("Henuz kayit yok.", fontSize = 13.sp,
+                    Text("Henüz kayıt yok.", fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.outline)
                 }
             }
@@ -405,10 +410,10 @@ private fun StatusCard(s: Status) {
             }
 
             if (s.fenceCount == 0) {
-                Text("Hicbir nokta izlenmiyor", fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold, color = Color(0xFFC62828))
+                Text("Hiçbir nokta izlenmiyor", fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold, color = DangerRed)
                 Text(
-                    "Asagidaki yerlere uygulama secmen lazim.",
+                    "Aşağıdaki yerlere uygulama seçmen lazım.",
                     fontSize = 13.sp, color = MaterialTheme.colorScheme.outline
                 )
                 return@Column
@@ -420,18 +425,18 @@ private fun StatusCard(s: Status) {
             if (s.nearestMeters >= 0) {
                 val m = s.nearestMeters.roundToInt()
                 val txt = if (m > 1200) "%.1f km".format(s.nearestMeters / 1000) else "$m m"
-                Text("En yakin: ${s.nearestName.ifBlank { "-" }} · $txt", fontSize = 14.sp)
+                Text("En yakın: ${s.nearestName.ifBlank { "-" }} · $txt", fontSize = 14.sp)
                 if (s.nearestMeters <= s.nearestTrigger) {
-                    Text("Tetikleme mesafesindesin - calismasi gerekirdi",
-                        fontSize = 13.sp, color = Color(0xFFC62828))
+                    Text("Tetikleme mesafesindesin — çalışması gerekirdi",
+                        fontSize = 13.sp, color = DangerRed)
                 }
             } else {
-                Text("Konum alinamadi", fontSize = 14.sp, color = Color(0xFFC62828))
+                Text("Konum alınamadı", fontSize = 14.sp, color = DangerRed)
             }
 
             if (s.lastScan > 0) {
                 val t = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(Date(s.lastScan))
-                Text("Subeler son guncelleme: $t", fontSize = 12.sp,
+                Text("Şubeler son güncelleme: $t", fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.outline)
             }
         }
@@ -440,19 +445,19 @@ private fun StatusCard(s: Status) {
 
 /** "8 sube · en yakin 340 m" gibi. Tetikleme mesafesi burada gosterilmez. */
 private fun subtitleFor(place: Place, info: PlaceInfo?): String {
-    if (!place.isReady) return "Uygulama secilmedi"
+    if (!place.isReady) return "Uygulama seçilmedi"
 
     val d = info?.nearest
     val dist = when {
         d == null -> null
-        d > 1200 -> "en yakin %.1f km".format(d / 1000)
-        else -> "en yakin ${d.roundToInt()} m"
+        d > 1200 -> "en yakın %.1f km".format(d / 1000)
+        else -> "en yakın ${d.roundToInt()} m"
     }
 
     return if (place.kind == PlaceKind.BRAND) {
         val n = info?.count ?: 0
         listOfNotNull(
-            if (n > 0) "$n sube" else "sube araniyor",
+            if (n > 0) "$n şube" else "şube aranıyor",
             dist
         ).joinToString(" · ")
     } else {
@@ -512,7 +517,7 @@ private fun PlaceCard(
                     ) { Text("Ayarla", fontSize = 16.sp) }
                 }
                 TextButton(onClick = { confirmDelete = true }) {
-                    Text("Sil", color = Color(0xFFC62828))
+                    Text("Sil", color = DangerRed)
                 }
             }
         }
@@ -524,11 +529,11 @@ private fun PlaceCard(
             title = { Text("${place.name} silinsin mi?") },
             confirmButton = {
                 TextButton(onClick = { confirmDelete = false; onDelete() }) {
-                    Text("Sil", color = Color(0xFFC62828))
+                    Text("Sil", color = DangerRed)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Vazgec") }
+                TextButton(onClick = { confirmDelete = false }) { Text("Vazgeç") }
             }
         )
     }
@@ -586,11 +591,11 @@ private fun PlaceDialog(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = isBrand, onClick = { kind = PlaceKind.BRAND })
-                        Text("Marka - her sube")
+                        Text("Marka — her şube")
                     }
                     OutlinedTextField(
                         value = name, onValueChange = { name = it },
-                        label = { Text("Isim") }, singleLine = true,
+                        label = { Text("İsim") }, singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -598,17 +603,17 @@ private fun PlaceDialog(
                 if (isBrand) {
                     OutlinedTextField(
                         value = search, onValueChange = { search = it },
-                        label = { Text("Marka adi (or. Starbucks)") }, singleLine = true,
+                        label = { Text("Marka adı (ör. Starbucks)") }, singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        "Nerede olursan ol yakinindaki subeler kendiliginden bulunur.",
+                        "Nerede olursan ol yakınındaki şubeler kendiliğinden bulunur.",
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.outline
                     )
                 }
 
                 OutlinedButton(onClick = { pickingApp = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (label.isEmpty()) "Acilacak uygulamayi sec" else label)
+                    Text(if (label.isEmpty()) "Açılacak uygulamayı seç" else label)
                 }
 
                 if (!isBrand) {
@@ -618,7 +623,7 @@ private fun PlaceDialog(
                             scope.launch {
                                 val loc = currentLocation(context)
                                 busy = false
-                                if (loc == null) error = "Konum alinamadi."
+                                if (loc == null) error = "Konum alınamadı."
                                 else {
                                     lat = loc.first; lng = loc.second
                                     gotFix = true; pickedAddress = "Su anki konumun"
@@ -626,7 +631,7 @@ private fun PlaceDialog(
                             }
                         },
                         enabled = !busy, modifier = Modifier.fillMaxWidth()
-                    ) { Text("Su an buradayim") }
+                    ) { Text("Şu an buradayım") }
 
                     Text("veya adres yaz:", fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline)
@@ -634,7 +639,7 @@ private fun PlaceDialog(
                     OutlinedTextField(
                         value = addressText,
                         onValueChange = { addressText = it },
-                        label = { Text("Adres / yer adi") },
+                        label = { Text("Adres / yer adı") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -644,13 +649,13 @@ private fun PlaceDialog(
                             scope.launch {
                                 val hits = MapSearch.geocode(addressText)
                                 busy = false
-                                if (hits.isEmpty()) error = "Bulunamadi, daha acik yaz."
+                                if (hits.isEmpty()) error = "Bulunamadı, daha açık yaz."
                                 else addressHits = hits
                             }
                         },
                         enabled = !busy && addressText.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (busy) "Araniyor..." else "Adresi ara") }
+                    ) { Text(if (busy) "Aranıyor..." else "Adresi ara") }
 
                     addressHits.forEach { hit ->
                         Text(
@@ -667,8 +672,8 @@ private fun PlaceDialog(
 
                     if (gotFix) {
                         Text(
-                            "Konum secildi ✓ ${pickedAddress.take(50)}",
-                            fontSize = 12.sp, color = Color(0xFF2E7D32)
+                            "Konum seçildi ✓ ${pickedAddress.take(50)}",
+                            fontSize = 12.sp, color = OkGreen
                         )
                     }
                 }
@@ -676,19 +681,19 @@ private fun PlaceDialog(
                 Text("Tetikleme mesafesi: ${trigger.roundToInt()} m", fontSize = 14.sp)
                 Slider(value = trigger, onValueChange = { trigger = it }, valueRange = 20f..300f)
                 Text(
-                    "Bu kadar yaklasinca calisir. Gec kaliyorsa buyut.",
+                    "Bu kadar yaklaşınca çalışır. Geç kalıyorsa büyüt.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.outline
                 )
 
                 Text(
-                    if (cooldown < 1f) "Bekleme suresi: yok (her seferinde calisir)"
-                    else "Bekleme suresi: ${cooldown.roundToInt()} dakika",
+                    if (cooldown < 1f) "Bekleme süresi: yok (her seferinde çalışır)"
+                    else "Bekleme süresi: ${cooldown.roundToInt()} dakika",
                     fontSize = 14.sp
                 )
                 Slider(value = cooldown, onValueChange = { cooldown = it }, valueRange = 0f..180f)
                 Text(
-                    "Calistiktan sonra bu sure boyunca ayni yerde tekrar calismaz. " +
-                        "Sok icin 5 dk, spor salonu icin 120 dk mantikli.",
+                    "Çalıştıktan sonra bu süre boyunca aynı yerde tekrar çalışmaz. " +
+                        "Şok için 5 dk, spor salonu için 120 dk mantıklı.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.outline
                 )
 
@@ -697,7 +702,7 @@ private fun PlaceDialog(
                     Text("Ses")
                     Spacer(Modifier.width(12.dp))
                     Checkbox(checked = vibrate, onCheckedChange = { vibrate = it })
-                    Text("Titresim")
+                    Text("Titreşim")
                 }
 
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
@@ -720,7 +725,7 @@ private fun PlaceDialog(
             ) { Text("Kaydet") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) { Text("Vazgec") }
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Vazgeç") }
         }
     )
 
@@ -728,7 +733,7 @@ private fun PlaceDialog(
         AlertDialog(
             onDismissRequest = { pickingApp = false },
             confirmButton = {},
-            title = { Text("Uygulama sec") },
+            title = { Text("Uygulama seç") },
             text = {
                 LazyColumn(Modifier.heightIn(max = 420.dp)) {
                     items(apps, key = { it.packageName }) { a ->

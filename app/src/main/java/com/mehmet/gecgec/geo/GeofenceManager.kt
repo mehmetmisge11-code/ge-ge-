@@ -68,7 +68,7 @@ class GeofenceManager(private val context: Context) {
         forceRefresh: Boolean = false
     ): Result<Int> = runCatching {
         if (!hasPermissions()) {
-            EventLog.add(context, "Konum izni eksik - cember kurulamadi")
+            EventLog.add(context, "Konum izni eksik — çember kurulamadı")
             error("Konum izni eksik")
         }
 
@@ -80,7 +80,7 @@ class GeofenceManager(private val context: Context) {
         if (hasBrand) {
             val here = currentLocation()
             if (here != null && (forceRefresh || poiStore.isStale(cache, here.first, here.second))) {
-                EventLog.add(context, "Yakindaki subeler haritadan cekiliyor...")
+                EventLog.add(context, "Yakındaki şubeler haritadan çekiliyor…")
                 cache = poiStore.refresh(here.first, here.second, list)
             }
         }
@@ -120,11 +120,11 @@ class GeofenceManager(private val context: Context) {
             .build()
 
         client.addGeofences(request, pendingIntent()).await()
-        EventLog.add(context, "${targets.size} nokta izlemeye alindi")
+        EventLog.add(context, "${targets.size} nokta izlemeye alındı")
         Log.i(TAG, "${fences.size} geofence kuruldu")
         targets.size
     }.onFailure {
-        EventLog.add(context, "Cember kurulamadi: ${it.message}")
+        EventLog.add(context, "Çember kurulamadı: ${it.message}")
     }
 
     companion object {

@@ -47,7 +47,7 @@ object AppLauncher {
         if (isCoolingDown(context, place, key)) {
             EventLog.add(
                 context,
-                "${place.name}: son ${place.cooldownMinutes} dk icinde calisti, atlandi"
+                "${place.name}: son ${place.cooldownMinutes} dk içinde çalıştı, atlandı"
             )
             return
         }
@@ -65,8 +65,8 @@ object AppLauncher {
             }
 
         if (launchIntent == null) {
-            EventLog.add(context, "${place.targetLabel} bulunamadi (kaldirilmis olabilir)")
-            notify(context, place, "Uygulama bulunamadi", null)
+            EventLog.add(context, "${place.targetLabel} bulunamadı (kaldırılmış olabilir)")
+            notify(context, place, "Uygulama bulunamadı", null)
             return
         }
 
@@ -74,7 +74,7 @@ object AppLauncher {
         notify(context, place, why, launchIntent)
 
         if (!Settings.canDrawOverlays(context)) {
-            EventLog.add(context, "${place.name}: bildirim gonderildi ($why)")
+            EventLog.add(context, "${place.name}: bildirim gönderildi ($why)")
             return
         }
 
@@ -94,14 +94,14 @@ object AppLauncher {
                     putExtra(TriggerActivity.EXTRA_EMOJI, place.emoji)
                 }
                 context.startActivity(i)
-                EventLog.add(context, "${place.name}: ekran yakildi ($why)")
+                EventLog.add(context, "${place.name}: ekran yakıldı ($why)")
             } else {
                 context.startActivity(launchIntent)
-                EventLog.add(context, "${place.name} → ${place.targetLabel} acildi ($why)")
+                EventLog.add(context, "${place.name} → ${place.targetLabel} açıldı ($why)")
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Acma basarisiz", t)
-            EventLog.add(context, "${place.name}: acilamadi, bildirim gonderildi")
+            EventLog.add(context, "${place.name}: açılamadı, bildirim gönderildi")
         }
     }
 
@@ -136,10 +136,10 @@ object AppLauncher {
 
         val ch = NotificationChannel(
             CHANNEL_ID,
-            "Yer uyarilari",
+            "Yer uyarıları",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Kayitli bir yere yaklasinca calan uyari"
+            description = "Kayıtlı bir yere yaklaşınca çalan uyarı"
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 450, 180, 450)
             setSound(

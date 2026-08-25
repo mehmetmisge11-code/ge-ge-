@@ -16,7 +16,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -61,7 +60,7 @@ class TriggerActivity : ComponentActivity() {
         val emoji = intent.getStringExtra(EXTRA_EMOJI).orEmpty().ifBlank { "📍" }
 
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme()) {
+            MaterialTheme(colorScheme = GecGecDark) {
                 Surface(Modifier.fillMaxSize()) {
                     Column(
                         Modifier.fillMaxSize().padding(32.dp),
@@ -130,7 +129,7 @@ class TriggerActivity : ComponentActivity() {
             km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
                 override fun onDismissSucceeded() = open(pkg)
                 override fun onDismissError() {
-                    EventLog.add(this@TriggerActivity, "Kilit acma hatasi")
+                    EventLog.add(this@TriggerActivity, "Kilit açma hatası")
                 }
                 override fun onDismissCancelled() {}
             })
@@ -146,7 +145,7 @@ class TriggerActivity : ComponentActivity() {
             i.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
             startActivity(i)
         } else {
-            EventLog.add(this, "$pkg bulunamadi")
+            EventLog.add(this, "$pkg bulunamadı")
         }
         finish()
     }
