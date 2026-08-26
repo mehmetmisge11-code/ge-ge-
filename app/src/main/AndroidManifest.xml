@@ -15,6 +15,9 @@
     <!-- Subeleri haritadan cekmek icin -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Kilit ekraninda kart gosterebilmek icin (alarm uygulamalarinin izni) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />

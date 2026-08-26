@@ -48,8 +48,12 @@ data class Place(
     /** FIXED icin kayitli konum */
     val lat: Double = 0.0,
     val lng: Double = 0.0,
-    /** Dis cember: buraya girince telefon hassas GPS takibine gecer. */
-    val fenceMeters: Float = 150f,
+    /**
+     * Dis cember: buraya girince telefon hassas GPS takibine gecer.
+     * Buyuk olmasi sart - Android cemberi hemen haber vermiyor, arabadayken
+     * kucuk cember icinden haber gelmeden cikiyorsun.
+     */
+    val fenceMeters: Float = 500f,
     /** Asil tetikleme mesafesi. */
     val triggerMeters: Float = 40f,
     val cooldownMinutes: Int = 30,

@@ -35,6 +35,7 @@ import com.mehmet.gecgec.data.PlaceStore
 import com.mehmet.gecgec.data.PoiStore
 import com.mehmet.gecgec.data.Target
 import com.mehmet.gecgec.data.buildTargets
+import com.mehmet.gecgec.data.distanceMeters
 import com.mehmet.gecgec.launch.AppLauncher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -132,6 +133,11 @@ class ProximityService : Service() {
     private val watching = linkedSetOf<String>()
     private var callback: LocationCallback? = null
     private var closest = Double.MAX_VALUE
+    private var lastSpeed = 0.0
+
+    /** Her hedef icin simdiye kadarki en yakin ve bir onceki mesafe. */
+    private val minDist = mutableMapOf<String, Double>()
+    private val lastDist = mutableMapOf<String, Double>()
 
     private val autoStop = Runnable {
         if (closest == Double.MAX_VALUE) {
@@ -144,7 +150,8 @@ class ProximityService : Service() {
                 EventLog.add(
                     this,
                     "Tetiklenmedi: en yakın $m m geldin, ayar ${need.roundToInt()} m. " +
-                        "Ayarlar'dan mesafeyi ${(closest * 1.4).roundToInt()} m yaparsan çalışır."
+                        "Ayarlar'dan mesafeyi ${(closest * 1.4).roundToInt()} m yaparsan çalışır." +
+                        if (lastSpeed > 3) " (son hız ${(lastSpeed * 3.6).roundToInt()} km/s)" else ""
                 )
             } else {
                 EventLog.add(this, "Takip bitti (en yakın: $m m)")
@@ -212,9 +219,12 @@ class ProximityService : Service() {
             return
         }
 
-        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
-            .setMinUpdateIntervalMillis(2000L)
+        // Saniyede bir olcum: 50 km/h'te iki olcum arasi 14 metre.
+        // 3 saniyede bir olsaydi 42 metre atlardi ve hedefi kacirirdik.
+        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
+            .setMinUpdateIntervalMillis(500L)
             .setMinUpdateDistanceMeters(0f)
+            .setWaitForAccurateLocation(false)
             .build()
 
         callback = object : LocationCallback() {
@@ -226,17 +236,34 @@ class ProximityService : Service() {
     }
 
     private fun onLocation(loc: Location) {
+        val speed = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0   // m/s
+        lastSpeed = speed
         val done = mutableListOf<String>()
 
         for (id in watching) {
             val t = targets.firstOrNull { it.fenceId == id } ?: continue
-            val out = FloatArray(1)
-            Location.distanceBetween(loc.latitude, loc.longitude, t.lat, t.lng, out)
-            val d = out[0].toDouble()
+            val d = distanceMeters(loc.latitude, loc.longitude, t.lat, t.lng)
+
+            val prev = lastDist[id] ?: Double.MAX_VALUE
+            val seen = minDist[id] ?: Double.MAX_VALUE
+            if (d < seen) minDist[id] = d
+            lastDist[id] = d
             if (d < closest) closest = d
 
-            if (d <= t.place.triggerMeters) {
-                AppLauncher.fire(this, t.place, "${d.roundToInt()} m · ${t.label}", t.fenceId)
+            // Hiz payi: yayayken ayarladigin mesafe, arabadayken cok daha erken.
+            // 50 km/h (14 m/s) -> ayar 40 m ise ~120 m'de tetikler.
+            val eff = (t.place.triggerMeters * (1.0 + speed.coerceAtMost(30.0) / 7.0))
+                .coerceAtMost(t.place.fenceMeters.toDouble())
+
+            // Gecip gidiyorsak: en yakin noktayi gectik ve yeterince yaklastik
+            val movingAway = d > prev + 8
+            val wasClose = (minDist[id] ?: Double.MAX_VALUE) <= eff * 2
+
+            if (d <= eff || (movingAway && wasClose)) {
+                val kmh = (speed * 3.6).roundToInt()
+                val why = if (kmh > 8) "${d.roundToInt()} m · $kmh km/s · ${t.label}"
+                else "${d.roundToInt()} m · ${t.label}"
+                AppLauncher.fire(this, t.place, why, t.fenceId)
                 done += id
             }
         }

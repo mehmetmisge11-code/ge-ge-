@@ -153,6 +153,22 @@ object AppLauncher {
         nm.createNotificationChannel(ch)
     }
 
+    /** Kilit ekranindaki karti acan niyet. */
+    private fun triggerIntent(context: Context, place: Place): PendingIntent {
+        val i = Intent(context, TriggerActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(TriggerActivity.EXTRA_PKG, place.targetPackage)
+            putExtra(TriggerActivity.EXTRA_LABEL, place.targetLabel)
+            putExtra(TriggerActivity.EXTRA_PLACE, place.name)
+            putExtra(TriggerActivity.EXTRA_EMOJI, place.emoji)
+        }
+        return PendingIntent.getActivity(
+            context, place.id.hashCode() + 1, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     private fun notify(context: Context, place: Place, why: String, launchIntent: Intent?) {
         ensureChannel(context)
 
@@ -175,6 +191,13 @@ object AppLauncher {
             .setAutoCancel(true)
 
         if (pi != null) b.setContentIntent(pi)
+
+        // Tam ekran uyari: alarm uygulamalarinin kullandigi yol.
+        // Izin verilmisse kilit ekraninda kart KESIN acilir; verilmemisse
+        // Android bunu normal bildirime cevirir, yine de sesli gelir.
+        if (launchIntent != null) {
+            b.setFullScreenIntent(triggerIntent(context, place), true)
+        }
 
         try {
             NotificationManagerCompat.from(context).notify(place.id.hashCode(), b.build())

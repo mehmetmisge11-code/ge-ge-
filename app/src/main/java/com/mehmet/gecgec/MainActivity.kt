@@ -1,12 +1,14 @@
 package com.mehmet.gecgec
 
 import android.Manifest
+import android.app.NotificationManager
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,17 +19,21 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -63,7 +69,45 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Hedef uygulamanin kendi ikonunu getirir - Sok'un amblemi, Starbucks'in amblemi. */
+/** Hedef uygulamanin amblemi + o amblemden cikarilan marka rengi. */
+data class AppIcon(val image: ImageBitmap, val accent: Color)
+
+/**
+ * Amblemin baskin rengini bulur: Sok'un ikonundan kirmizi,
+ * Starbucks'inkinden yesil. Gri, cok koyu ve cok acik pikseller sayilmaz -
+ * yoksa beyaz zeminli her ikon gri cikardi.
+ */
+private fun dominantAccent(bmp: Bitmap): Color {
+    val small = Bitmap.createScaledBitmap(bmp, 24, 24, true)
+    var r = 0L; var g = 0L; var b = 0L; var n = 0
+    val hsv = FloatArray(3)
+    for (y in 0 until small.height) {
+        for (x in 0 until small.width) {
+            val p = small.getPixel(x, y)
+            if (AndroidColor.alpha(p) < 128) continue
+            AndroidColor.colorToHSV(p, hsv)
+            if (hsv[1] < 0.30f || hsv[2] < 0.20f || hsv[2] > 0.97f) continue
+            r += AndroidColor.red(p); g += AndroidColor.green(p); b += AndroidColor.blue(p); n++
+        }
+    }
+    if (n == 0) return Color(0xFF7CC33F)
+    return Color((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
+}
+
+fun Context.appIcon(pkg: String): AppIcon? {
+    if (pkg.isBlank()) return null
+    return runCatching {
+        val d = packageManager.getApplicationIcon(pkg)
+        val w = d.intrinsicWidth.coerceIn(1, 512)
+        val h = d.intrinsicHeight.coerceIn(1, 512)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        d.setBounds(0, 0, w, h)
+        d.draw(Canvas(bmp))
+        AppIcon(bmp.asImageBitmap(), dominantAccent(bmp))
+    }.getOrNull()
+}
+
+/** Sadece amblem - kilit ekrani karti bunu kullaniyor. */
 fun Context.appIconBitmap(pkg: String): ImageBitmap? {
     if (pkg.isBlank()) return null
     return runCatching {
@@ -147,6 +191,9 @@ private fun rememberSetupSteps(): List<SetupStep> {
         val overlay = Settings.canDrawOverlays(context)
         val battery = context.getSystemService(PowerManager::class.java)
             .isIgnoringBatteryOptimizations(context.packageName)
+        // Android 14'ten once bu izin kendiliginden verilmis sayilir
+        val fullScreen = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+            context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
 
         listOf(
             SetupStep("Konum izni", "Nerede olduğunu bilmem lazım.", "İzin ver", fine) {
@@ -187,6 +234,21 @@ private fun rememberSetupSteps(): List<SetupStep> {
             ) {
                 openSettings.launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             },
+            SetupStep(
+                "Tam ekran uyarı",
+                "Açılan listede GeçGeç'i aç. Alarm uygulamalarının kullandığı izin — " +
+                    "kilit ekranında kartın kesin çıkmasını bu sağlıyor.",
+                "Aç", fullScreen
+            ) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    openSettings.launch(
+                        Intent(
+                            Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                }
+            },
             SetupStep("Bildirim izni", "Uyarı gönderebilmem için.", "İzin ver", notif) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -223,7 +285,7 @@ private fun SetupScreen(step: SetupStep, doneCount: Int, total: Int) {
 
 // ==================== ANA EKRAN ====================
 
-/** Her yer icin karta yazilan ozet: kac sube var, en yakini kac metre. */
+/** Her yer icin: kac sube var, en yakini kac metre. */
 private data class PlaceInfo(val count: Int, val nearest: Double?)
 
 private data class Status(
@@ -247,6 +309,7 @@ private fun HomeScreen() {
 
     var editing by remember { mutableStateOf<Place?>(null) }
     var editingIsNew by remember { mutableStateOf(false) }
+    var expandedId by remember { mutableStateOf<String?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     var showLog by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(Status()) }
@@ -261,11 +324,8 @@ private fun HomeScreen() {
     }
 
     LaunchedEffect(Unit) { store.ensureSeeded() }
-
-    // Yerler degistiginde cemberleri kur; gerekiyorsa subeleri de kendiliginden yeniler
     LaunchedEffect(places) { if (places.isNotEmpty()) geo.sync(places) }
 
-    // Durum: kac nokta izleniyor, en yakini kac metre
     LaunchedEffect(places, tick) {
         status = status.copy(checking = true)
         val cache = poiStore.load()
@@ -283,13 +343,10 @@ private fun HomeScreen() {
             lastScan = cache.updatedAt,
             checking = false
         )
-
         info = targets.groupBy { it.place.id }.mapValues { (_, list) ->
             PlaceInfo(
                 count = list.size,
-                nearest = here?.let { (la, ln) ->
-                    list.minOf { distanceMeters(la, ln, it.lat, it.lng) }
-                }
+                nearest = here?.let { (la, ln) -> list.minOf { distanceMeters(la, ln, it.lat, it.lng) } }
             )
         }
     }
@@ -308,79 +365,110 @@ private fun HomeScreen() {
         },
         modifier = Modifier.fillMaxSize()
     ) {
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            Column {
-                Spacer(Modifier.height(20.dp))
-                Text("GeçGeç", fontSize = 32.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        items(places, key = { it.id }) { p ->
-            PlaceCard(
-                place = p,
-                info = info[p.id],
-                onSetup = { editing = p; editingIsNew = false },
-                onToggle = {
-                    scope.launch { store.update(p.id) { it.copy(enabled = !it.enabled) } }
-                },
-                onTest = { AppLauncher.test(context, p); tick++ },
-                onDelete = { scope.launch { store.delete(p.id) } }
-            )
-        }
-
-        item {
-            OutlinedButton(
-                onClick = {
-                    editing = Place(name = "", emoji = "📍")
-                    editingIsNew = true
-                },
-                modifier = Modifier.fillMaxWidth().height(52.dp)
-            ) { Text("+ Yeni yer ekle", fontSize = 16.sp) }
-        }
-
-        // Kayitlar - normalde kapali, tek satir yer kaplar
-        item {
-            Row(
-                Modifier.fillMaxWidth().clickable { showLog = !showLog }.padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(if (showLog) "▾" else "▸", fontSize = 16.sp)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Kayıtlar",
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.outline
-                )
-                Spacer(Modifier.weight(1f))
-                if (showLog) {
-                    TextButton(onClick = { EventLog.clear(context); tick++ }) { Text("Temizle") }
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            item {
+                Column {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "GeçGeç",
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = (-1).sp
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "YERLER",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Spacer(Modifier.height(6.dp))
                 }
             }
-        }
 
-        if (showLog) {
-            item { StatusCard(status) }
-            if (log.isEmpty()) {
-                item {
-                    Text("Henüz kayıt yok.", fontSize = 13.sp,
+            items(places, key = { it.id }) { p ->
+                PlaceRow(
+                    place = p,
+                    info = info[p.id],
+                    expanded = expandedId == p.id,
+                    onTap = { expandedId = if (expandedId == p.id) null else p.id },
+                    onToggle = {
+                        scope.launch { store.update(p.id) { it.copy(enabled = !it.enabled) } }
+                    },
+                    onTest = { AppLauncher.test(context, p); tick++ },
+                    onSetup = { editing = p; editingIsNew = false },
+                    onDelete = { scope.launch { store.delete(p.id) }; expandedId = null }
+                )
+            }
+
+            item {
+                Text(
+                    "+ Yeni yer ekle",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            editing = Place(name = "", emoji = "📍")
+                            editingIsNew = true
+                        }
+                        .padding(vertical = 16.dp, horizontal = 13.dp)
+                )
+            }
+
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { showLog = !showLog }
+                        .padding(vertical = 8.dp, horizontal = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(if (showLog) "▾" else "▸", fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Kayıtlar", fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.weight(1f))
+                    if (showLog) {
+                        Text(
+                            "Temizle",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { EventLog.clear(context); tick++ }
+                        )
+                    }
                 }
             }
-            items(log) { line ->
-                Text(
-                    line,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+
+            if (showLog) {
+                item { StatusCard(status) }
+                if (log.isEmpty()) {
+                    item {
+                        Text(
+                            "Henüz kayıt yok.", fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(horizontal = 13.dp)
+                        )
+                    }
+                }
+                items(log) { line ->
+                    Text(
+                        line, fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 13.dp)
+                    )
+                }
             }
         }
-    }
     }
 
     editing?.let { place ->
@@ -390,8 +478,7 @@ private fun HomeScreen() {
             onDismiss = { editing = null },
             onSave = { updated ->
                 scope.launch {
-                    if (editingIsNew) store.add(updated)
-                    else store.update(updated.id) { updated }
+                    if (editingIsNew) store.add(updated) else store.update(updated.id) { updated }
                     editing = null
                     tick++
                 }
@@ -402,123 +489,131 @@ private fun HomeScreen() {
 
 @Composable
 private fun StatusCard(s: Status) {
-    Card(colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (s.checking) {
-                Text("Kontrol ediliyor...", fontSize = 14.sp)
-                return@Column
-            }
-
-            if (s.fenceCount == 0) {
-                Text("Hiçbir nokta izlenmiyor", fontSize = 16.sp,
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 13.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        when {
+            s.checking -> Text("Kontrol ediliyor…", fontSize = 13.sp)
+            s.fenceCount == 0 -> {
+                Text("Hiçbir nokta izlenmiyor", fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold, color = DangerRed)
-                Text(
-                    "Aşağıdaki yerlere uygulama seçmen lazım.",
-                    fontSize = 13.sp, color = MaterialTheme.colorScheme.outline
-                )
-                return@Column
-            }
-
-            Text("${s.fenceCount} nokta izleniyor ✓", fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold)
-
-            if (s.nearestMeters >= 0) {
-                val m = s.nearestMeters.roundToInt()
-                val txt = if (m > 1200) "%.1f km".format(s.nearestMeters / 1000) else "$m m"
-                Text("En yakın: ${s.nearestName.ifBlank { "-" }} · $txt", fontSize = 14.sp)
-                if (s.nearestMeters <= s.nearestTrigger) {
-                    Text("Tetikleme mesafesindesin — çalışması gerekirdi",
-                        fontSize = 13.sp, color = DangerRed)
-                }
-            } else {
-                Text("Konum alınamadı", fontSize = 14.sp, color = DangerRed)
-            }
-
-            if (s.lastScan > 0) {
-                val t = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(Date(s.lastScan))
-                Text("Şubeler son güncelleme: $t", fontSize = 12.sp,
+                Text("Yerlere uygulama seçmen lazım.", fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.outline)
+            }
+            else -> {
+                Text("${s.fenceCount} nokta izleniyor ✓", fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold)
+                if (s.nearestMeters >= 0) {
+                    Text("En yakın: ${s.nearestName.ifBlank { "-" }} · ${fmtDist(s.nearestMeters)}",
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
+                } else {
+                    Text("Konum alınamadı", fontSize = 13.sp, color = DangerRed)
+                }
+                if (s.lastScan > 0) {
+                    val t = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+                        .format(Date(s.lastScan))
+                    Text("Şubeler son güncelleme: $t", fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.outline)
+                }
             }
         }
     }
 }
 
-/** "8 sube · en yakin 340 m" gibi. Tetikleme mesafesi burada gosterilmez. */
-private fun subtitleFor(place: Place, info: PlaceInfo?): String {
-    if (!place.isReady) return "Uygulama seçilmedi"
+// ==================== YER SATIRI ====================
 
-    val d = info?.nearest
-    val dist = when {
-        d == null -> null
-        d > 1200 -> "en yakın %.1f km".format(d / 1000)
-        else -> "en yakın ${d.roundToInt()} m"
-    }
-
-    return if (place.kind == PlaceKind.BRAND) {
-        val n = info?.count ?: 0
-        listOfNotNull(
-            if (n > 0) "$n şube" else "şube aranıyor",
-            dist
-        ).joinToString(" · ")
-    } else {
-        listOfNotNull(place.targetLabel, dist).joinToString(" · ")
-    }
-}
+private fun fmtDist(d: Double): String =
+    if (d > 1200) "%.1f km".format(d / 1000) else "${d.roundToInt()} m"
 
 @Composable
-private fun PlaceCard(
+private fun PlaceRow(
     place: Place,
     info: PlaceInfo?,
-    onSetup: () -> Unit,
+    expanded: Boolean,
+    onTap: () -> Unit,
     onToggle: () -> Unit,
     onTest: () -> Unit,
+    onSetup: () -> Unit,
     onDelete: () -> Unit
 ) {
-    var confirmDelete by remember { mutableStateOf(false) }
-    val isBrand = place.kind == PlaceKind.BRAND
     val context = LocalContext.current
-    val icon = remember(place.targetPackage) { context.appIconBitmap(place.targetPackage) }
+    val icon = remember(place.targetPackage) { context.appIcon(place.targetPackage) }
+    val accent = icon?.accent ?: MaterialTheme.colorScheme.primary
+    var confirmDelete by remember { mutableStateOf(false) }
 
-    Card {
-        Column(Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (icon != null) {
-                    Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(44.dp))
-                } else {
-                    Text(place.emoji, fontSize = 30.sp)
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(place.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        subtitleFor(place, info),
-                        color = MaterialTheme.colorScheme.outline, fontSize = 14.sp
-                    )
-                }
-                if (place.isReady) {
-                    Switch(checked = place.enabled, onCheckedChange = { onToggle() })
-                }
+    val sub = when {
+        !place.isReady -> "uygulama seçilmedi"
+        place.kind == PlaceKind.BRAND -> "${info?.count ?: 0} şube"
+        else -> place.targetLabel
+    }
+    val dist = info?.nearest?.let { fmtDist(it) } ?: "—"
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(15.dp))
+            // Renk soldan iceri siziyor, saga dogru kayboluyor
+            .background(
+                Brush.horizontalGradient(
+                    0.0f to accent.copy(alpha = if (place.enabled) 0.30f else 0.10f),
+                    0.62f to Color.Transparent
+                )
+            )
+            .clickable { onTap() }
+            .padding(horizontal = 13.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                Image(
+                    bitmap = icon.image,
+                    contentDescription = null,
+                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(11.dp))
+                )
+            } else {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center
+                ) { Text(place.emoji, fontSize = 18.sp) }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.width(13.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (place.isReady) {
-                    OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f)) {
-                        Text("Dene")
-                    }
-                    OutlinedButton(onClick = onSetup, modifier = Modifier.weight(1f)) {
-                        Text("Ayarlar")
-                    }
-                } else {
-                    Button(
-                        onClick = onSetup,
-                        modifier = Modifier.weight(1f).height(52.dp)
-                    ) { Text("Ayarla", fontSize = 16.sp) }
-                }
-                TextButton(onClick = { confirmDelete = true }) {
-                    Text("Sil", color = DangerRed)
-                }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    place.name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (place.enabled) MaterialTheme.colorScheme.onBackground
+                    else MaterialTheme.colorScheme.outline
+                )
+                Text(sub, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+            }
+
+            if (expanded) {
+                Switch(checked = place.enabled, onCheckedChange = { onToggle() })
+            } else {
+                Text(
+                    dist,
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (place.enabled) MaterialTheme.colorScheme.onBackground
+                    else MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+
+        if (expanded) {
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Pill("Dene", Modifier.weight(1f), onTest)
+                Pill(if (place.isReady) "Ayarlar" else "Ayarla", Modifier.weight(1f), onSetup)
+                Pill("Sil", Modifier, { confirmDelete = true }, DangerRed)
             }
         }
     }
@@ -537,6 +632,27 @@ private fun PlaceCard(
             }
         )
     }
+}
+
+@Composable
+private fun Pill(
+    text: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    color: Color = MaterialTheme.colorScheme.onBackground
+) {
+    Text(
+        text,
+        fontSize = 12.5.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = color,
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.Black.copy(alpha = 0.28f))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 16.dp)
+    )
 }
 
 // ==================== YER AYARLARI ====================
