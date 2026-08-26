@@ -110,8 +110,10 @@ private fun dominantAccent(bmp: Bitmap): Color {
             AndroidColor.colorToHSV(p, hsv)
             val sat = hsv[1]
             val vaL = hsv[2]
-            // Beyaz, siyah ve griler marka rengi degildir
-            if (sat < 0.22f || vaL < 0.16f || vaL > 0.98f) continue
+            // Beyaz, siyah ve griler marka rengi degildir.
+            // DIKKAT: parlakliga ust sinir KOYMA - Sok'un ve McDonald's'in
+            // sarisi parlak oldugu icin eleniyordu. Beyazi zaten doygunluk eliyor.
+            if (sat < 0.20f || vaL < 0.15f) continue
 
             val w = sat * sat * vaL
             val b = ((hsv[0] / (360f / HUE_BUCKETS)).toInt()).coerceIn(0, HUE_BUCKETS - 1)
@@ -151,8 +153,8 @@ private fun dominantAccent(bmp: Bitmap): Color {
         AndroidColor.rgb(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b2.toInt().coerceIn(0, 255)),
         hsv
     )
-    hsv[1] = hsv[1].coerceAtLeast(0.72f)
-    hsv[2] = hsv[2].coerceIn(0.78f, 0.98f)
+    hsv[1] = hsv[1].coerceAtLeast(0.78f)
+    hsv[2] = hsv[2].coerceIn(0.82f, 1.0f)
     return Color(AndroidColor.HSVToColor(hsv))
 }
 
