@@ -61,6 +61,7 @@ import com.mehmet.gecgec.data.buildTargets
 import com.mehmet.gecgec.data.distanceMeters
 import com.mehmet.gecgec.geo.GeofenceManager
 import com.mehmet.gecgec.launch.AppLauncher
+import com.mehmet.gecgec.launch.InstalledApp
 import com.mehmet.gecgec.launch.installedLaunchableApps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
