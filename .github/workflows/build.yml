@@ -28,17 +28,51 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      # Derleme cokerse is akisi hemen durmaz - once hatayi dosyaya yaziyoruz.
       - name: Derle
-        run: gradle assembleDebug --no-daemon
+        id: derle
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon 2>&1 | tee kayit.txt
+
+      # Basarisizsa: hatayi indirilebilir bir dosyaya cikar.
+      # Boylece kimsenin Actions kayitlarini avlamasi gerekmiyor.
+      - name: Hatayi dosyaya yaz
+        if: steps.derle.outcome != 'success'
+        run: |
+          echo "=== DERLEME BASARISIZ ===" > HATA.txt
+          echo "" >> HATA.txt
+          echo "--- Kotlin/Java hatalari ---" >> HATA.txt
+          grep -E "^e: |error:|^\s*\^" kayit.txt | head -80 >> HATA.txt || true
+          echo "" >> HATA.txt
+          echo "--- Gradle ozeti ---" >> HATA.txt
+          grep -E "FAILURE|What went wrong|Caused by|Execution failed" kayit.txt | head -30 >> HATA.txt || true
+          echo "" >> HATA.txt
+          echo "--- Kaydin son 100 satiri ---" >> HATA.txt
+          tail -100 kayit.txt >> HATA.txt
+
+      - name: Hatayi yukari at
+        if: steps.derle.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: HATA
+          path: HATA.txt
 
       - name: Imzayi dogrula
+        if: steps.derle.outcome == 'success'
         run: |
           APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | tail -1)
           echo "kullanilan arac: $APKSIGNER"
           "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
 
       - name: APK yukari at
+        if: steps.derle.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: GecGec-APK
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Derleme coktuyse is akisini kirmizi yap
+        if: steps.derle.outcome != 'success'
+        run: exit 1
