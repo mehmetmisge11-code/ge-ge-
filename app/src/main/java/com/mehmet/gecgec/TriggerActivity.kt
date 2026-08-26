@@ -67,10 +67,11 @@ class TriggerActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        val icon = appIconBitmap(pkg)
+                        // Amblem arka planda hazirlanir - kart aninda acilsin diye
+                        val icon = rememberAppIcon(pkg)
                         if (icon != null) {
                             Image(
-                                bitmap = icon,
+                                bitmap = icon.image,
                                 contentDescription = null,
                                 modifier = Modifier.size(96.dp)
                             )

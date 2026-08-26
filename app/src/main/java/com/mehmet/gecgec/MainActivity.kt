@@ -62,7 +62,9 @@ import com.mehmet.gecgec.data.distanceMeters
 import com.mehmet.gecgec.geo.GeofenceManager
 import com.mehmet.gecgec.launch.AppLauncher
 import com.mehmet.gecgec.launch.installedLaunchableApps
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -73,25 +75,105 @@ import kotlin.math.roundToInt
 data class AppIcon(val image: ImageBitmap, val accent: Color)
 
 /**
- * Amblemin baskin rengini bulur: Sok'un ikonundan kirmizi,
- * Starbucks'inkinden yesil. Gri, cok koyu ve cok acik pikseller sayilmaz -
- * yoksa beyaz zeminli her ikon gri cikardi.
+ * Amblemin marka rengini bulur.
+ *
+ * Renklerin duz ortalamasi alinmaz - kirmizi + sari + beyazin ortalamasi
+ * camur bir renk verir. Bunun yerine:
+ *   1. Pikseller 24 ton grubuna ayrilir, her piksel doygunlugu kadar agirlikli sayilir
+ *      (kucuk ama canli bir amblem, buyuk ve solgun bir zemini yener)
+ *   2. En agir grup secilir
+ *   3. Ikinci grup ona hem yakin hem guclu ise ikisi karistirilir
+ *      (McDonald's'in kirmizisi + sarisi -> turuncu)
+ *   4. Cikan renk canlandirilir - solgun kalirsa koyu zeminde kaybolur
  */
+private const val HUE_BUCKETS = 24
+
+private fun hueGap(a: Float, b: Float): Float {
+    val d = kotlin.math.abs(a - b) % 360f
+    return if (d > 180f) 360f - d else d
+}
+
 private fun dominantAccent(bmp: Bitmap): Color {
-    val small = Bitmap.createScaledBitmap(bmp, 24, 24, true)
-    var r = 0L; var g = 0L; var b = 0L; var n = 0
+    val small = Bitmap.createScaledBitmap(bmp, 32, 32, true)
+
+    val weight = FloatArray(HUE_BUCKETS)
+    val sr = FloatArray(HUE_BUCKETS)
+    val sg = FloatArray(HUE_BUCKETS)
+    val sb = FloatArray(HUE_BUCKETS)
     val hsv = FloatArray(3)
+
     for (y in 0 until small.height) {
         for (x in 0 until small.width) {
             val p = small.getPixel(x, y)
             if (AndroidColor.alpha(p) < 128) continue
             AndroidColor.colorToHSV(p, hsv)
-            if (hsv[1] < 0.30f || hsv[2] < 0.20f || hsv[2] > 0.97f) continue
-            r += AndroidColor.red(p); g += AndroidColor.green(p); b += AndroidColor.blue(p); n++
+            val sat = hsv[1]
+            val vaL = hsv[2]
+            // Beyaz, siyah ve griler marka rengi degildir
+            if (sat < 0.22f || vaL < 0.16f || vaL > 0.98f) continue
+
+            val w = sat * sat * vaL
+            val b = ((hsv[0] / (360f / HUE_BUCKETS)).toInt()).coerceIn(0, HUE_BUCKETS - 1)
+            weight[b] += w
+            sr[b] += AndroidColor.red(p) * w
+            sg[b] += AndroidColor.green(p) * w
+            sb[b] += AndroidColor.blue(p) * w
         }
     }
-    if (n == 0) return Color(0xFF7CC33F)
-    return Color((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
+
+    val best = weight.indices.maxByOrNull { weight[it] } ?: return Color(0xFF7CC33F)
+    if (weight[best] <= 0f) return Color(0xFF7CC33F)
+
+    var r = sr[best] / weight[best]
+    var g = sg[best] / weight[best]
+    var b2 = sb[best] / weight[best]
+
+    // Ikinci en guclu grup: yakin bir tonsa karistir, uzaksa karistirma
+    val second = weight.indices
+        .filter { it != best && weight[it] > 0f }
+        .maxByOrNull { weight[it] }
+
+    if (second != null && weight[second] > weight[best] * 0.45f) {
+        val step = 360f / HUE_BUCKETS
+        val h1 = best * step + step / 2f
+        val h2 = second * step + step / 2f
+        if (hueGap(h1, h2) <= 70f) {
+            val k = weight[second] / (weight[best] + weight[second])
+            r = r * (1 - k) + (sr[second] / weight[second]) * k
+            g = g * (1 - k) + (sg[second] / weight[second]) * k
+            b2 = b2 * (1 - k) + (sb[second] / weight[second]) * k
+        }
+    }
+
+    // Canlandir: koyu zeminde okunacak kadar doygun ve parlak olsun
+    AndroidColor.colorToHSV(
+        AndroidColor.rgb(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b2.toInt().coerceIn(0, 255)),
+        hsv
+    )
+    hsv[1] = hsv[1].coerceAtLeast(0.72f)
+    hsv[2] = hsv[2].coerceIn(0.78f, 0.98f)
+    return Color(AndroidColor.HSVToColor(hsv))
+}
+
+/** Bir kere hesaplanan amblem/renk onbellegi - her cizimde yeniden uretmeyelim. */
+private val iconCache = mutableMapOf<String, AppIcon?>()
+
+/**
+ * Amblemi ARKA PLANDA hazirlar. Ana is parcacigi beklemez, ekran donmaz.
+ * Hazir olana kadar satirda emoji gorunur, sonra kendiliginden amblem gelir.
+ */
+@Composable
+fun rememberAppIcon(pkg: String): AppIcon? {
+    val context = LocalContext.current
+    return produceState<AppIcon?>(initialValue = iconCache[pkg], key1 = pkg) {
+        if (iconCache.containsKey(pkg)) {
+            value = iconCache[pkg]
+            return@produceState
+        }
+        val loaded = withContext(Dispatchers.IO) { context.appIcon(pkg) }
+        iconCache[pkg] = loaded
+        value = loaded
+    }.value
 }
 
 fun Context.appIcon(pkg: String): AppIcon? {
@@ -324,12 +406,14 @@ private fun HomeScreen() {
     }
 
     LaunchedEffect(Unit) { store.ensureSeeded() }
-    LaunchedEffect(places) { if (places.isNotEmpty()) geo.sync(places) }
+    LaunchedEffect(places) {
+        if (places.isNotEmpty()) withContext(Dispatchers.IO) { geo.sync(places) }
+    }
 
     LaunchedEffect(places, tick) {
         status = status.copy(checking = true)
-        val cache = poiStore.load()
-        val targets = buildTargets(places, cache)
+        val cache = withContext(Dispatchers.IO) { poiStore.load() }
+        val targets = withContext(Dispatchers.Default) { buildTargets(places, cache) }
         val here = currentLocation(context)
         val nearest = here?.let { (la, ln) ->
             targets.minByOrNull { distanceMeters(la, ln, it.lat, it.lng) }
@@ -358,7 +442,7 @@ private fun HomeScreen() {
         onRefresh = {
             refreshing = true
             scope.launch {
-                geo.sync(places, forceRefresh = true)
+                withContext(Dispatchers.IO) { geo.sync(places, forceRefresh = true) }
                 tick++
                 refreshing = false
             }
@@ -540,7 +624,7 @@ private fun PlaceRow(
     onDelete: () -> Unit
 ) {
     val context = LocalContext.current
-    val icon = remember(place.targetPackage) { context.appIcon(place.targetPackage) }
+    val icon = rememberAppIcon(place.targetPackage)
     val accent = icon?.accent ?: MaterialTheme.colorScheme.primary
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -558,7 +642,7 @@ private fun PlaceRow(
             // Renk soldan iceri siziyor, saga dogru kayboluyor
             .background(
                 Brush.horizontalGradient(
-                    0.0f to accent.copy(alpha = if (place.enabled) 0.30f else 0.10f),
+                    0.0f to accent.copy(alpha = if (place.enabled) 0.34f else 0.10f),
                     0.62f to Color.Transparent
                 )
             )
@@ -666,7 +750,12 @@ private fun PlaceDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val apps = remember { context.installedLaunchableApps() }
+    // Yuklu uygulamalari okumak yavas bir is - arka planda yapiliyor,
+    // bu yuzden pencere aninda aciliyor.
+    var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        apps = withContext(Dispatchers.IO) { context.installedLaunchableApps() }
+    }
 
     var kind by remember { mutableStateOf(place.kind) }
     var name by remember { mutableStateOf(place.name) }
@@ -851,6 +940,9 @@ private fun PlaceDialog(
             confirmButton = {},
             title = { Text("Uygulama seç") },
             text = {
+                if (apps.isEmpty()) {
+                    Text("Uygulamalar okunuyor…", color = MaterialTheme.colorScheme.outline)
+                }
                 LazyColumn(Modifier.heightIn(max = 420.dp)) {
                     items(apps, key = { it.packageName }) { a ->
                         ListItem(
